@@ -12,12 +12,20 @@ import MetalKit
 
 //setup scene
 
-let direction = simd_normalize(simd_float4(0, 0, 0, 0) - simd_float4(5, 5, 0, 0))
+let direction = simd_normalize(simd_float4(0, 0, 0, 0) - simd_float4(13, 2, 3, 0))
 
-let camera = Camera(position: simd_float4(5, 5, 0, 0), direction: direction,
+let camera = Camera(position: simd_float4(13, 2, 3, 0), direction: direction,
     horizontalFov: Float.pi / 4.0, resolution: simd_int2(400, 300))
 
-let sphere = Sphere(center: simd_float4(0, 0, 0, 0), radius: 1.0)
+var spheres: [Sphere] = []
+let sphere1 = Sphere(center: simd_float4(4, 2, 0, 0), radius: 1.0, diffuse: simd_float4(1, 0, 0, 1)) // front sphere
+let sphere2 = Sphere(center: simd_float4(0, 2, 0, 0), radius: 1.0, diffuse: simd_float4(0, 1, 0, 1)) // middle sphere
+let sphere3 = Sphere(center: simd_float4(-4, 2, 0, 0), radius: 1.0, diffuse: simd_float4(0, 0, 1, 1)) // back sphere
+let ground = Sphere(center: simd_float4(0, -100, 0, 0), radius: 100.0, diffuse: simd_float4(0.2, 0.2, 0.2, 1)) // Large ground sphere
+spheres.append(sphere1)
+spheres.append(sphere2)
+spheres.append(sphere3)
+spheres.append(ground)
 
 render()
 
@@ -30,7 +38,7 @@ func render() {
     // Pre-allocate pixels array with black transparent pixels
     var pixels = [UInt8](repeating: 0, count: pixelCount * 4)
 
-    pixels = gpuIntersect(cameras: [camera], spheres: [sphere], pixels: pixels)
+    pixels = gpuIntersect(cameras: [camera], spheres: spheres, pixels: pixels)
 
     // let rays = camera.generateRays()
     // for (index, ray) in rays.enumerated() {
@@ -63,6 +71,7 @@ func render() {
 struct Sphere {
     var center: simd_float4
     var radius: Float
+    var diffuse: simd_float4
     var _padding: (Float, Float, Float) = (0, 0, 0) // 12 bytes padding
 }
 

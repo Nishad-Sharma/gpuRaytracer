@@ -25,13 +25,48 @@ Intersection intersect(Ray ray, Sphere sphere) {
     float b = 2.0 * dot(oc, ray.direction);
     float c = dot(oc, oc) - sphere.radius * sphere.radius;
     float discriminant = b * b - 4.0 * a * c;
+
+    Intersection result;
+    result.type = Miss;
+
     if (discriminant > 0.0) {
-        return Hit;
+        float t1 = (-b - sqrt(discriminant)) / (2.0 * a);
+        float t2 = (-b + sqrt(discriminant)) / (2.0 * a);
+        if ((t1 > 0.0) || (t2 > 0.0)) {
+            float3 hitPoint = ray.origin + ray.direction * min(t1, t2);
+            float3 normal = normalize(hitPoint - sphereCenter3);
+            float epsilon = 1e-4;
+            float3 offsetHitPoint = hitPoint + epsilon * normal;
+
+            result.type = Hit;
+            result.ray = ray;
+            result.point = offsetHitPoint;
+            result.normal = normal;
+            result.diffuse = sphere.diffuse;
+        }
     }
-    return Miss;
+    return result;
 }
 
-kernel void intersect(device const Camera* cameras, device const Sphere* spheres, device uchar* pixels, uint2 index [[thread_position_in_grid]]) {
+Intersection getClosestIntersection(Ray ray, device const Sphere* spheres, uint sphereCount) {
+    Intersection closestIntersection = Intersection();
+    closestIntersection.type = Miss;
+    float closestDistance = INFINITY;
+
+    for (uint i = 0; i < sphereCount; i++) {
+        Intersection result = intersect(ray, spheres[i]);
+        if (result.type == Hit) {
+            float distance = length(result.point - ray.origin);
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closestIntersection = result;
+            }
+        }
+    }
+    return closestIntersection;
+}
+
+kernel void intersect(device const Camera* cameras, device const Sphere* spheres, constant uint& sphereCount, device uchar* pixels, uint2 index [[thread_position_in_grid]]) {
     // gen rays
     Camera camera = cameras[0];
     float aspectRatio = float(camera.resolution.x / camera.resolution.y);
@@ -59,14 +94,14 @@ kernel void intersect(device const Camera* cameras, device const Sphere* spheres
     ray.origin = pos3;
     ray.direction = dir;
 
-    Sphere sphere = spheres[0];
     int pixelOffset = (y * camera.resolution.x + x) * 4;
 
-    if (intersect(ray, sphere) == Hit) {
-        pixels[pixelOffset + 0] = uchar(1.0 * 255); // R
-        pixels[pixelOffset + 1] = uchar(0.0 * 255); // G
-        pixels[pixelOffset + 2] = uchar(0.0 * 255); // B
-        pixels[pixelOffset + 3] = 255;              // A
+    Intersection closestIntersection = getClosestIntersection(ray, spheres, sphereCount);
+    if (closestIntersection.type == Hit) {
+        pixels[pixelOffset + 0] = uchar(closestIntersection.diffuse.x * 255); // R
+        pixels[pixelOffset + 1] = uchar(closestIntersection.diffuse.y * 255); // G
+        pixels[pixelOffset + 2] = uchar(closestIntersection.diffuse.z * 255); // B
+        pixels[pixelOffset + 3] = uchar(closestIntersection.diffuse.w * 255); // A
     } else {
         pixels[pixelOffset + 0] = uchar(0.0 * 255); // R
         pixels[pixelOffset + 1] = uchar(0.0 * 255); // G

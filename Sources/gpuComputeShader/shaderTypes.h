@@ -13,6 +13,7 @@
 typedef struct {
     simd_float4 center;
     float radius;
+    simd_float4 diffuse;
     float _padding[3];
 } Sphere;
 
@@ -31,9 +32,17 @@ typedef struct {
     simd_float3 direction;
 } Ray;
 
-typedef enum Intersection {
+typedef enum {
     Hit,
     Miss
+} IntersectionType;
+
+typedef struct {
+    IntersectionType type;
+    simd_float3 point;
+    Ray ray;
+    simd_float3 normal;
+    simd_float4 diffuse;
 } Intersection;
 
 #endif /* ShaderTypes_h */

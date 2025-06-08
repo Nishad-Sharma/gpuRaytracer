@@ -36,13 +36,15 @@ func gpuIntersect(cameras: [Camera], spheres: [Sphere], pixels: [UInt8]) -> [UIn
 
     let cameraBuffer = device.makeBuffer(bytes: cameras, length: cameras.count * MemoryLayout<Camera>.size, options: .storageModeShared)
     let spheresBuffer = device.makeBuffer(bytes: spheres, length: spheres.count * MemoryLayout<Sphere>.size, options: .storageModeShared)
+    var sphereCount = UInt32(spheres.count)
     let pixelsBuffer = device.makeBuffer(length: pixels.count * MemoryLayout<UInt8>.size, options: .storageModeShared)
 
     let computeCommandEncoder = commandBuffer?.makeComputeCommandEncoder()
     computeCommandEncoder?.setComputePipelineState(computePipeline)
     computeCommandEncoder?.setBuffer(cameraBuffer, offset: 0, index: 0)
     computeCommandEncoder?.setBuffer(spheresBuffer, offset: 0, index: 1)
-    computeCommandEncoder?.setBuffer(pixelsBuffer, offset: 0, index: 2)
+    computeCommandEncoder?.setBytes(&sphereCount, length: MemoryLayout<UInt32>.size, index: 2)
+    computeCommandEncoder?.setBuffer(pixelsBuffer, offset: 0, index: 3)
 
     // sort out threads, can yoyu just do 32*32 even if it doesnt divide evenly?
     let width = Int(cameras[0].resolution.x)
