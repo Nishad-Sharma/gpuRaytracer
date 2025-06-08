@@ -1,2 +1,4 @@
 gpuComputeShader.xcodeproj/
 gradient.png
+.build/
+.vscode/

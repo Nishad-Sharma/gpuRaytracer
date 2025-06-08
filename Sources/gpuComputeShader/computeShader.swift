@@ -9,17 +9,23 @@ import Foundation
 import simd
 import MetalKit
 
-
 func gpuIntersect(cameras: [Camera], spheres: [Sphere], pixels: [UInt8]) -> [UInt8] {
     let device = MTLCreateSystemDefaultDevice()!
     
-    let defaultLibrary = device.makeDefaultLibrary()
+    let metalLibURL = URL(fileURLWithPath: "/Users/nishadsharma/tempShader/Sources/gpuComputeShader/MyMetalLib.metallib")
 
-    let intersectFunction = defaultLibrary?.makeFunction(name: "intersect")
+    print(metalLibURL)
+    guard let defaultLibrary = try? device.makeLibrary(URL: metalLibURL) else {
+        fatalError("Could not load Metal library from \(metalLibURL.path)") 
+    }
+
+    guard let intersectFunction = defaultLibrary.makeFunction(name: "intersect") else {
+        fatalError("Could not find 'intersect' kernel in Metal library")
+    }
 
     let computePipeline: MTLComputePipelineState
     do {
-        computePipeline = try device.makeComputePipelineState(function: intersectFunction!)
+        computePipeline = try device.makeComputePipelineState(function: intersectFunction)
     } catch {
         print("Failed to create compute pipeline state: \(error)")
         return pixels // maybe bad return fix?

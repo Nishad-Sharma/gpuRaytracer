@@ -52,7 +52,7 @@ func render() {
     //             pixels[pixelOffset + 3] = 255     
     //     }
     // }
-    savePixelArrayToImage(pixels: pixels, width: width, height: height, fileName: "/Users/nishadsharma/gpuComputeShader/gradient.png")
+    savePixelArrayToImage(pixels: pixels, width: width, height: height, fileName: "/Users/nishadsharma/tempShader/gradient.png")
     let endTime = DispatchTime.now()
     let nanoTime = endTime.uptimeNanoseconds - startTime.uptimeNanoseconds
     let timeInterval = Double(nanoTime) / 1_000_000_000 // Convert to seconds
