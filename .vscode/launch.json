@@ -1,0 +1,31 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:gpuRaytracer}",
+            "name": "Release gpuRaytracer",
+            "program": "${workspaceFolder:gpuRaytracer}/.build/release/gpuRaytracer",
+            "preLaunchTask": "swift: Build Release gpuRaytracer"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:gpuRaytracer}",
+            "name": "Debug gpuRaytracer",
+            "program": "${workspaceFolder:gpuRaytracer}/.build/debug/gpuRaytracer",
+            "preLaunchTask": "swift: Build Debug gpuRaytracer"
+        },
+        {
+            "name": "Debug lldb",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/.build/debug/gpuRaytracer",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "Build"
+        }
+    ]
+}

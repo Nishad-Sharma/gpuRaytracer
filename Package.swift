@@ -7,7 +7,7 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "gpuComputeShader", targets: ["gpuComputeShader"])
+        .executable(name: "gpuRaytracer", targets: ["gpuRaytracer"])
     ],
     dependencies: [
         // Add dependencies here if needed
@@ -20,9 +20,10 @@ let package = Package(
             publicHeadersPath: "."
         ),
         .executableTarget(
-            name: "gpuComputeShader",
+            name: "gpuRaytracer",
             dependencies: ["CShaderTypes"],
-            path: "Sources/gpuComputeShader"
+            path: "Sources/gpuRaytracer",
+            exclude: ["shaders.metal", "shaders.air", "MyMetalLib.metallib"]
         )
     ],
     

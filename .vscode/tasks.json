@@ -1,0 +1,30 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build Metal Library",
+            "type": "shell",
+            "command": "cd Sources/gpuRaytracer && xcrun -sdk macosx metal -I../CHeaders -c shaders.metal -o shaders.air && xcrun -sdk macosx metallib shaders.air -o MyMetalLib.metallib",
+            "problemMatcher": []
+        },
+        {
+            "label": "Build",
+            "type": "shell",
+            "command": "swift build",
+            "dependsOn": [
+                "Build Metal Library"
+            ],
+            "group": "build"
+        },
+        {
+            "label": "Run",
+            "type": "shell",
+            "command": "swift run",
+            "dependsOn": [
+                "Build Metal Library"
+            ],
+            "group": "test",
+            "problemMatcher": []
+        }
+    ]
+  }

@@ -1,6 +1,6 @@
 //
 //  shaderTypes.h
-//  gpuComputeShader
+//  gpuRaytracer
 //
 //  Created by Nishad Sharma on 7/6/2025.
 //

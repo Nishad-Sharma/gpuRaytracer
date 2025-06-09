@@ -1,4 +1,5 @@
-gpuComputeShader.xcodeproj/
+gpuRaytracer.xcodeproj/
 gradient.png
 .build/
-.vscode/
+Sources/gpuRaytracer/shaders.air
+Sources/gpuRaytracer/MyMetalLib.metallib

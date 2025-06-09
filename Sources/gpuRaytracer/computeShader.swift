@@ -1,6 +1,6 @@
 //
 //  computeShader.swift
-//  gpuComputeShader
+//  gpuRaytracer
 //
 //  Created by Nishad Sharma on 5/6/2025.
 //
@@ -39,7 +39,7 @@ func gpuIntersect(cameras: [Camera], spheres: [Sphere], pixels: [UInt8]) -> [UIn
 
     let device = MTLCreateSystemDefaultDevice()!
     let metalLibURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appendingPathComponent("Sources/gpuComputeShader/MyMetalLib.metallib")
+        .appendingPathComponent("Sources/gpuRaytracer/MyMetalLib.metallib")
 
     guard let defaultLibrary = try? device.makeLibrary(URL: metalLibURL) else {
         fatalError("Could not load Metal library from \(metalLibURL.path)") 

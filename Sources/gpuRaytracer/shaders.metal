@@ -1,6 +1,6 @@
 //
 //  add.metal
-//  gpuComputeShader
+//  gpuRaytracer
 //
 //  Created by Nishad Sharma on 5/6/2025.
 //
