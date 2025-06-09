@@ -14,10 +14,18 @@ func convertSpheres(spheres: [Sphere]) -> [SphereGPU] {
     return spheres.map { sphere in
         SphereGPU(
             center: sphere.center,
-            diffuse: sphere.diffuse,
+            material: convertMaterial(material: sphere.material),
             radius: sphere.radius
         )
     }
+}
+
+func convertMaterial(material: Material) -> MaterialGPU {
+    return MaterialGPU(
+        diffuse: material.diffuse,
+        metallic: material.metallic,
+        roughness: material.roughness
+    )
 }
 
 func convertCameras(cameras: [Camera]) -> [CameraGPU] {
@@ -33,9 +41,21 @@ func convertCameras(cameras: [Camera]) -> [CameraGPU] {
     }
 }
 
-func gpuIntersect(cameras: [Camera], spheres: [Sphere], pixels: [UInt8]) -> [UInt8] {
+func convertLights(lights: [SphereLight]) -> [SphereLightGPU] {
+    return lights.map { light in
+        SphereLightGPU(
+            center: light.center,
+            color: light.color,
+            emittedRadiance: light.emittedRadiance,
+            radius: light.radius
+        )
+    }
+}
+
+func gpuIntersect(cameras: [Camera], spheres: [Sphere], pixels: [UInt8], lights: [SphereLight], ambientLight: simd_float4) -> [UInt8] {
     let spheresGPU = convertSpheres(spheres: spheres)
     let camerasGPU = convertCameras(cameras: cameras)
+    let lightsGPU = convertLights(lights: lights)
 
     let device = MTLCreateSystemDefaultDevice()!
     let metalLibURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
@@ -45,8 +65,8 @@ func gpuIntersect(cameras: [Camera], spheres: [Sphere], pixels: [UInt8]) -> [UIn
         fatalError("Could not load Metal library from \(metalLibURL.path)") 
     }
 
-    guard let intersectFunction = defaultLibrary.makeFunction(name: "intersect") else {
-        fatalError("Could not find 'intersect' kernel in Metal library")
+    guard let intersectFunction = defaultLibrary.makeFunction(name: "draw") else {
+        fatalError("Could not find 'draw' kernel in Metal library")
     }
 
     let computePipeline: MTLComputePipelineState
@@ -64,6 +84,9 @@ func gpuIntersect(cameras: [Camera], spheres: [Sphere], pixels: [UInt8]) -> [UIn
     let spheresBuffer = device.makeBuffer(bytes: spheresGPU, length: spheresGPU.count * MemoryLayout<SphereGPU>.size, options: .storageModeShared)
     var sphereCount = UInt32(spheresGPU.count)
     let pixelsBuffer = device.makeBuffer(length: pixels.count * MemoryLayout<UInt8>.size, options: .storageModeShared)
+    let lightsBuffer = device.makeBuffer(bytes: lightsGPU, length: lightsGPU.count * MemoryLayout<SphereLightGPU>.size, options: .storageModeShared)
+    var lightCount = UInt32(lightsGPU.count)
+    let ambientLightBuffer = device.makeBuffer(bytes: [ambientLight], length: MemoryLayout<simd_float4>.size, options: .storageModeShared)
 
     let computeCommandEncoder = commandBuffer?.makeComputeCommandEncoder()
     computeCommandEncoder?.setComputePipelineState(computePipeline)
@@ -71,13 +94,18 @@ func gpuIntersect(cameras: [Camera], spheres: [Sphere], pixels: [UInt8]) -> [UIn
     computeCommandEncoder?.setBuffer(spheresBuffer, offset: 0, index: 1)
     computeCommandEncoder?.setBytes(&sphereCount, length: MemoryLayout<UInt32>.size, index: 2)
     computeCommandEncoder?.setBuffer(pixelsBuffer, offset: 0, index: 3)
+    computeCommandEncoder?.setBuffer(lightsBuffer, offset: 0, index: 4)
+    computeCommandEncoder?.setBytes(&lightCount, length: MemoryLayout<UInt32>.size, index: 5)
+    computeCommandEncoder?.setBuffer(ambientLightBuffer, offset: 0, index: 6)
 
     // sort out threads, can yoyu just do 32*32 even if it doesnt divide evenly?
     let width = Int(camerasGPU[0].resolution.x)
     let height = Int(camerasGPU[0].resolution.y)
     let gridSize = MTLSize(width: width, height: height, depth: 1)
 
-    let threadsPerThreadGroup = MTLSize(width: 32, height: 32, depth: 1)
+    // let threadsPerThreadGroup = MTLSize(width: 32, height: 32, depth: 1)
+    let threadsPerThreadGroup = MTLSize(width: 16, height: 16, depth: 1)
+    // let threadsPerThreadGroup = MTLSize(width: 8, height: 8, depth: 1)
 
     computeCommandEncoder?.dispatchThreads(gridSize, threadsPerThreadgroup: threadsPerThreadGroup)
     computeCommandEncoder?.endEncoding()

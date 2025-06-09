@@ -15,19 +15,37 @@ import MetalKit
 let direction = simd_normalize(simd_float3(0, 0, 0) - simd_float3(13, 2, 3))
 let camera = Camera(position: simd_float3(13, 2, 3), direction: direction,
     resolution: simd_int2(400, 300), horizontalFov: Float.pi / 4.0)
-let cameras: [Camera] = [camera]
+// let camera = Camera(position: simd_float3(13, 6, 3), direction: direction, // higher cam angle
+//     resolution: simd_int2(400, 300), horizontalFov: Float.pi / 4.0)
+let cameras = [camera]
+
+let lightBulb = SphereLight(center: simd_float3(3, 3, 3), color: simd_float4(1, 0.9, 0.7, 1), 
+    LightType: .bulb(efficacy: 15, watts: 60), radius: 0.1)
+// let lightBulb = SphereLight(center: simd_float3(3, 3, 3), color: simd_float4(1, 0.8, 0.4, 1),  // warmer light
+    // LightType: .bulb(efficacy: 15, watts: 60), radius: 0.1)
+var lights = [lightBulb]
+var ambientLight = simd_float4(0.53, 0.81, 0.92, 1) 
 
 var spheres: [Sphere] = []
-let sphere1 = Sphere(center: simd_float3(4, 2, 0), diffuse: simd_float4(1, 0, 0, 1) , radius: 1.0) // front sphere
-let sphere2 = Sphere(center: simd_float3(0, 2, 0), diffuse: simd_float4(0, 1, 0, 1) , radius: 1.0) // middle sphere
-let sphere3 = Sphere(center: simd_float3(-4, 2, 0), diffuse: simd_float4(0, 0, 1, 1), radius: 1.0) // back sphere
-let ground = Sphere(center: simd_float3(0, -100, 0), diffuse: simd_float4(0.2, 0.2, 0.2, 1) , radius: 100.0) // Large ground sphere
+let sphere1 = Sphere(center: simd_float3(4, 2, 0), 
+material: Material(diffuse: simd_float4(1, 0, 0, 1), metallic: 0.9, roughness: 0.1), 
+radius: 1.0) // front sphere
+let sphere2 = Sphere(center: simd_float3(0, 2, 0), 
+material: Material(diffuse: simd_float4(0, 1, 0, 1), metallic: 0.05, roughness: 0.1), 
+radius: 1.0) // middle sphere
+let sphere3 = Sphere(center: simd_float3(-4, 2, 0), 
+material: Material(diffuse: simd_float4(0, 0, 1, 1), metallic: 0.1, roughness: 0.9), 
+radius: 1.0) // back sphere
+let ground = Sphere(center: simd_float3(0, -100, 0), 
+material: Material(diffuse: simd_float4(0.2, 0.2, 0.2, 1), metallic: 0.0, roughness: 0.9), 
+radius: 100.0) // ground sphere
 spheres.append(sphere1)
 spheres.append(sphere2)
 spheres.append(sphere3)
 spheres.append(ground)
-
 render()
+
+
 
 func render() {
     let startTime = DispatchTime.now()
@@ -38,7 +56,7 @@ func render() {
     // Pre-allocate pixels array with black transparent pixels
     var pixels = [UInt8](repeating: 0, count: pixelCount * 4)
 
-    pixels = gpuIntersect(cameras: cameras, spheres: spheres, pixels: pixels)
+    pixels = gpuIntersect(cameras: cameras, spheres: spheres, pixels: pixels, lights: lights, ambientLight: ambientLight)
 
     savePixelArrayToImage(pixels: pixels, width: width, height: height, fileName: "gradient.png")
     let endTime = DispatchTime.now()
@@ -48,9 +66,49 @@ func render() {
     print("Render completed in \(String(format: "%.2f", timeInterval)) seconds")
 }
 
+enum LightType {
+    case bulb(efficacy: Float, watts: Float)
+    case radiometic(radiantFlux: Float) 
+}
+
+struct SphereLight {
+    var center: simd_float3
+    var color: simd_float4
+    var LightType: LightType
+    var radius: Float
+
+    // Convert to radiance for outgoing rays
+    var emittedRadiance: simd_float3 {
+        switch LightType {
+        case .bulb(let efficacy, let watts):
+            let luminousFlux = efficacy * watts // lm
+            let radiantFlux = luminousFlux / 683.0 // Convert lumens to watts (assuming 555 nm peak sensitivity)
+            return calculateRadiance(radiantFlux: radiantFlux)
+        case .radiometic(let radiantFlux):
+            return calculateRadiance(radiantFlux: radiantFlux)
+        }
+    }
+
+    func calculateRadiance(radiantFlux: Float) -> simd_float3 {
+        let surfaceArea = 4.0 * Float.pi * radius * radius
+        let radiantExitance = radiantFlux / surfaceArea // W/m²
+        
+        // For Lambertian emitter: radiance = exitance / π
+        let radiance = radiantExitance / Float.pi // W/(sr·m²)
+        
+        return simd_float3(color.x, color.y, color.z) * radiance
+    }
+}
+
+struct Material {
+    var diffuse: simd_float4
+    var metallic: Float
+    var roughness: Float
+}
+
 struct Sphere {
     var center: simd_float3
-    var diffuse: simd_float4
+    var material: Material
     var radius: Float
 }
 
@@ -60,7 +118,7 @@ struct Camera {
     var up: simd_float3 = simd_float3(0, 1, 0) // assuming camera's up vector is positive y-axis
     var resolution: simd_int2
     var horizontalFov: Float // field of view in radians
-    var ev100: Float = 0.01
+    var ev100: Float = 4.0 // lower ev100 makes light brighter, doesnt seem to impact rest of scene
     
     // func exposure() -> Float {
     //     return 1.0 / pow(2.0, ev100 * 1.2)
