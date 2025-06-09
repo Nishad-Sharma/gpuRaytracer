@@ -5,28 +5,23 @@
 //  Created by Nishad Sharma on 5/6/2025.
 //
 
+#include <metal_stdlib>
+using namespace metal;
+#include "shaderTypes.h"
+
 // kernel makes this a public gpu function. also defines it as a compute function/kernel which allows parallel calcuation with threads
 kernel void addArrays(device const float* arr1, device const float* arr2, device float* arr3, uint index [[thread_position_in_grid]]) {
     arr3[index] = arr1[index] + arr2[index];
 }
 
-// kernel void intersect(device const Camera* camera, device const Sphere* spheres, device UInt8* pixels uint2 index [[thread_position_in_grid]]) {
-
-// }
-
-#include <metal_stdlib>
-using namespace metal;
-#include "shaderTypes.h"
-
-Intersection intersect(Ray ray, Sphere sphere) {
-    float3 sphereCenter3 = float3(sphere.center.x, sphere.center.y, sphere.center.z);
-    float3 oc = ray.origin - sphereCenter3;
+IntersectionGPU intersect(RayGPU ray, SphereGPU sphere) {
+    float3 oc = ray.origin - sphere.center;
     float a = dot(ray.direction, ray.direction);
     float b = 2.0 * dot(oc, ray.direction);
     float c = dot(oc, oc) - sphere.radius * sphere.radius;
     float discriminant = b * b - 4.0 * a * c;
 
-    Intersection result;
+    IntersectionGPU result;
     result.type = Miss;
 
     if (discriminant > 0.0) {
@@ -34,7 +29,7 @@ Intersection intersect(Ray ray, Sphere sphere) {
         float t2 = (-b + sqrt(discriminant)) / (2.0 * a);
         if ((t1 > 0.0) || (t2 > 0.0)) {
             float3 hitPoint = ray.origin + ray.direction * min(t1, t2);
-            float3 normal = normalize(hitPoint - sphereCenter3);
+            float3 normal = normalize(hitPoint - sphere.center);
             float epsilon = 1e-4;
             float3 offsetHitPoint = hitPoint + epsilon * normal;
 
@@ -48,13 +43,13 @@ Intersection intersect(Ray ray, Sphere sphere) {
     return result;
 }
 
-Intersection getClosestIntersection(Ray ray, device const Sphere* spheres, uint sphereCount) {
-    Intersection closestIntersection = Intersection();
+IntersectionGPU getClosestIntersection(RayGPU ray, device const SphereGPU* spheres, uint sphereCount) {
+    IntersectionGPU closestIntersection = IntersectionGPU();
     closestIntersection.type = Miss;
     float closestDistance = INFINITY;
 
     for (uint i = 0; i < sphereCount; i++) {
-        Intersection result = intersect(ray, spheres[i]);
+        IntersectionGPU result = intersect(ray, spheres[i]);
         if (result.type == Hit) {
             float distance = length(result.point - ray.origin);
             if (distance < closestDistance) {
@@ -66,18 +61,16 @@ Intersection getClosestIntersection(Ray ray, device const Sphere* spheres, uint 
     return closestIntersection;
 }
 
-kernel void intersect(device const Camera* cameras, device const Sphere* spheres, constant uint& sphereCount, device uchar* pixels, uint2 index [[thread_position_in_grid]]) {
+kernel void intersect(device const CameraGPU* cameras, device const SphereGPU* spheres, constant uint& sphereCount, device uchar* pixels, uint2 index [[thread_position_in_grid]]) {
     // gen rays
-    Camera camera = cameras[0];
+    CameraGPU camera = cameras[0];
     float aspectRatio = float(camera.resolution.x / camera.resolution.y);
     float halfWidth = tan(camera.horizontalFov / 2.0);
     float halfHeight = halfWidth / aspectRatio;
     
     // Camera coord system
-    float3 up3 = float3(camera.up.x, camera.up.y, camera.up.z);
-    float3 dir3 = float3(camera.direction.x, camera.direction.y, camera.direction.z);
-    float3 w = -normalize(dir3);
-    float3 u = normalize(cross(up3, w));
+    float3 w = -normalize(camera.direction);
+    float3 u = normalize(cross(camera.up, w));
     float3 v = normalize(cross(w, u));
     
     int x = index.x;
@@ -89,14 +82,13 @@ kernel void intersect(device const Camera* cameras, device const Sphere* spheres
 
     float3 dir = normalize(s * halfWidth * u + t * halfHeight * v - w);
     
-    float3 pos3 = float3(camera.position.x, camera.position.y, camera.position.z);
-    Ray ray;
-    ray.origin = pos3;
+    RayGPU ray;
+    ray.origin = camera.position;
     ray.direction = dir;
 
     int pixelOffset = (y * camera.resolution.x + x) * 4;
 
-    Intersection closestIntersection = getClosestIntersection(ray, spheres, sphereCount);
+    IntersectionGPU closestIntersection = getClosestIntersection(ray, spheres, sphereCount);
     if (closestIntersection.type == Hit) {
         pixels[pixelOffset + 0] = uchar(closestIntersection.diffuse.x * 255); // R
         pixels[pixelOffset + 1] = uchar(closestIntersection.diffuse.y * 255); // G

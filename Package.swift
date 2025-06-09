@@ -13,9 +13,16 @@ let package = Package(
         // Add dependencies here if needed
     ],
     targets: [
+        .target(
+            name: "CShaderTypes",
+            path: "Sources/CHeaders",
+            sources: ["shaderTypes.h"],
+            publicHeadersPath: "."
+        ),
         .executableTarget(
             name: "gpuComputeShader",
-            path: "Sources/gpuComputeShader",
+            dependencies: ["CShaderTypes"],
+            path: "Sources/gpuComputeShader"
         )
     ],
     

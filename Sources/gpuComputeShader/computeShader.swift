@@ -8,13 +8,39 @@ import Metal
 import Foundation
 import simd
 import MetalKit
+import CShaderTypes
+
+func convertSpheres(spheres: [Sphere]) -> [SphereGPU] {
+    return spheres.map { sphere in
+        SphereGPU(
+            center: sphere.center,
+            diffuse: sphere.diffuse,
+            radius: sphere.radius
+        )
+    }
+}
+
+func convertCameras(cameras: [Camera]) -> [CameraGPU] {
+    return cameras.map { camera in
+        CameraGPU(
+            position: camera.position,
+            direction: camera.direction,
+            up: camera.up,
+            resolution: camera.resolution,
+            horizontalFov: camera.horizontalFov,
+            ev100: camera.ev100
+        )
+    }
+}
 
 func gpuIntersect(cameras: [Camera], spheres: [Sphere], pixels: [UInt8]) -> [UInt8] {
-    let device = MTLCreateSystemDefaultDevice()!
-    
-    let metalLibURL = URL(fileURLWithPath: "/Users/nishadsharma/tempShader/Sources/gpuComputeShader/MyMetalLib.metallib")
+    let spheresGPU = convertSpheres(spheres: spheres)
+    let camerasGPU = convertCameras(cameras: cameras)
 
-    print(metalLibURL)
+    let device = MTLCreateSystemDefaultDevice()!
+    let metalLibURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent("Sources/gpuComputeShader/MyMetalLib.metallib")
+
     guard let defaultLibrary = try? device.makeLibrary(URL: metalLibURL) else {
         fatalError("Could not load Metal library from \(metalLibURL.path)") 
     }
@@ -34,9 +60,9 @@ func gpuIntersect(cameras: [Camera], spheres: [Sphere], pixels: [UInt8]) -> [UIn
     let commandQueue = device.makeCommandQueue()
     let commandBuffer = commandQueue?.makeCommandBuffer()
 
-    let cameraBuffer = device.makeBuffer(bytes: cameras, length: cameras.count * MemoryLayout<Camera>.size, options: .storageModeShared)
-    let spheresBuffer = device.makeBuffer(bytes: spheres, length: spheres.count * MemoryLayout<Sphere>.size, options: .storageModeShared)
-    var sphereCount = UInt32(spheres.count)
+    let cameraBuffer = device.makeBuffer(bytes: camerasGPU, length: camerasGPU.count * MemoryLayout<CameraGPU>.size, options: .storageModeShared)
+    let spheresBuffer = device.makeBuffer(bytes: spheresGPU, length: spheresGPU.count * MemoryLayout<SphereGPU>.size, options: .storageModeShared)
+    var sphereCount = UInt32(spheresGPU.count)
     let pixelsBuffer = device.makeBuffer(length: pixels.count * MemoryLayout<UInt8>.size, options: .storageModeShared)
 
     let computeCommandEncoder = commandBuffer?.makeComputeCommandEncoder()
@@ -47,8 +73,8 @@ func gpuIntersect(cameras: [Camera], spheres: [Sphere], pixels: [UInt8]) -> [UIn
     computeCommandEncoder?.setBuffer(pixelsBuffer, offset: 0, index: 3)
 
     // sort out threads, can yoyu just do 32*32 even if it doesnt divide evenly?
-    let width = Int(cameras[0].resolution.x)
-    let height = Int(cameras[0].resolution.y)
+    let width = Int(camerasGPU[0].resolution.x)
+    let height = Int(camerasGPU[0].resolution.y)
     let gridSize = MTLSize(width: width, height: height, depth: 1)
 
     let threadsPerThreadGroup = MTLSize(width: 32, height: 32, depth: 1)
@@ -59,9 +85,7 @@ func gpuIntersect(cameras: [Camera], spheres: [Sphere], pixels: [UInt8]) -> [UIn
     commandBuffer?.waitUntilCompleted()
 
     let pixelPtr = pixelsBuffer!.contents()
-
     let count = pixels.count
-
     let bufferPointer = pixelPtr.bindMemory(to: UInt8.self, capacity: count)
     let pixelArray = Array(UnsafeBufferPointer(start: bufferPointer, count: count))
     return pixelArray

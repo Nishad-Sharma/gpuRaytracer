@@ -11,38 +11,36 @@
 #include <simd/simd.h>
 
 typedef struct {
-    simd_float4 center;
-    float radius;
+    simd_float3 center;
     simd_float4 diffuse;
-    float _padding[3];
-} Sphere;
+    float radius;
+} SphereGPU;
 
 typedef struct {
-    simd_float4 position;
-    simd_float4 direction;
-    float horizontalFov;
+    simd_float3 position;
+    simd_float3 direction;
+    simd_float3 up;
     simd_int2 resolution;
-    simd_float4 up;
+    float horizontalFov;
     float ev100;
-    float _padding[3];
-} Camera;
+} CameraGPU;
 
 typedef struct {
     simd_float3 origin;
     simd_float3 direction;
-} Ray;
+} RayGPU;
 
 typedef enum {
     Hit,
     Miss
-} IntersectionType;
+} IntersectionTypeGPU;
 
 typedef struct {
-    IntersectionType type;
+    IntersectionTypeGPU type;
     simd_float3 point;
-    Ray ray;
+    RayGPU ray;
     simd_float3 normal;
     simd_float4 diffuse;
-} Intersection;
+} IntersectionGPU;
 
 #endif /* ShaderTypes_h */
