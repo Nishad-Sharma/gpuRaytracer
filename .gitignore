@@ -3,3 +3,4 @@ gradient.png
 .build/
 Sources/gpuRaytracer/shaders.air
 Sources/gpuRaytracer/MyMetalLib.metallib
+triangle.png

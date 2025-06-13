@@ -10,6 +10,138 @@ import simd
 import MetalKit
 import CShaderTypes
 
+func convertMaterial(material: Material) -> MaterialGPU {
+    return MaterialGPU(
+        diffuse: material.diffuse,
+        metallic: material.metallic,
+        roughness: material.roughness
+    )
+}
+
+func convertTriangle(triangles: [Triangle]) -> [TriangleGPU] {
+    return triangles.map { triangle in       
+        var gpuTriangle = TriangleGPU()
+        gpuTriangle.vertices.0 = triangle.vertices[0]
+        gpuTriangle.vertices.1 = triangle.vertices[1]
+        gpuTriangle.vertices.2 = triangle.vertices[2]
+        gpuTriangle.material = convertMaterial(material: triangle.material)
+        return gpuTriangle
+    }
+}
+
+// must be setup in separate command to actual ray trace calc. ray trace needs complete accel structure anyway.
+// uses different command encoder than compute or render
+func setupAccelerationStructures(device: MTLDevice, triangles: [Triangle]) -> MTLAccelerationStructure {
+    // vertex buffer
+    let vertexData = triangles[0].vertices.withUnsafeBufferPointer { buffer in
+        Data(buffer: buffer)
+    }
+    let vertexBuffer = device.makeBuffer(bytes: vertexData.withUnsafeBytes { $0.bindMemory(to: Float.self).baseAddress! }, 
+                                        length: vertexData.count, 
+                                        options: [])!
+    
+    // triangle geometry descriptor, describes set of triangles for building acceleration structure
+    // tells gpu where triangle data is in memory, how many triangles and how to interpret data.
+    let geometryDescriptor = MTLAccelerationStructureTriangleGeometryDescriptor()
+    geometryDescriptor.vertexBuffer = vertexBuffer
+    geometryDescriptor.vertexBufferOffset = 0
+    geometryDescriptor.vertexStride = MemoryLayout<simd_float3>.stride
+    geometryDescriptor.triangleCount = triangles.count // = 1 right now
+
+    // primitive acceleration structure descriptor, tells gpu which geometry prims (triangles),
+    // how geometry is in memory which will be used to make the acceleration structure
+    let primitiveDescriptor = MTLPrimitiveAccelerationStructureDescriptor()
+    primitiveDescriptor.geometryDescriptors = [geometryDescriptor]
+
+    // get sizes for acceleration structure
+    let accelSizes = device.accelerationStructureSizes(descriptor: primitiveDescriptor)
+    // actual acceleration structure of size
+    let accelerationStructure = device.makeAccelerationStructure(size: accelSizes.accelerationStructureSize)!
+    // create scratch buffer for temp memory during construction of accel structure on gpu
+    let scratchBuffer = device.makeBuffer(length: accelSizes.buildScratchBufferSize, options: .storageModeShared)!
+
+    let commandQueue = device.makeCommandQueue()
+    let commandBuffer = commandQueue?.makeCommandBuffer()
+    // make command encoder for accel structure operations. different from computecommandEncoder
+    // which is used for compute operations
+    let encoder = commandBuffer!.makeAccelerationStructureCommandEncoder()!
+    
+    // tells gpu to actually build structure
+    encoder.build(accelerationStructure: accelerationStructure,
+                  descriptor: primitiveDescriptor,
+                  scratchBuffer: scratchBuffer,
+                  scratchBufferOffset: 0)
+    encoder.endEncoding()
+
+    commandBuffer?.commit()
+    commandBuffer?.waitUntilCompleted()
+
+    return accelerationStructure
+}
+
+func drawTriangle(device: MTLDevice, cameras: [Camera], pixels: [UInt8], 
+accelerationStructure : MTLAccelerationStructure) -> [UInt8] {
+    let camerasGPU = convertCameras(cameras: cameras)
+    // let trianglesGPU = convertTriangle(triangles: triangles)
+
+    let metalLibURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent("Sources/gpuRaytracer/MyMetalLib.metallib")
+
+    guard let defaultLibrary = try? device.makeLibrary(URL: metalLibURL) else {
+        fatalError("Could not load Metal library from \(metalLibURL.path)") 
+    }
+
+    guard let drawFunction = defaultLibrary.makeFunction(name: "drawTriangle") else {
+        fatalError("Could not find 'drawTriangle' kernel in Metal library")
+    }
+
+    // intersection function table maybe not needed??
+    let intersectionFunctionTableDescriptor = MTLIntersectionFunctionTableDescriptor()
+    intersectionFunctionTableDescriptor.functionCount = 1  
+
+    let computePipeline: MTLComputePipelineState
+    do {
+        computePipeline = try device.makeComputePipelineState(function: drawFunction)
+    } catch {
+        print("Failed to create compute pipeline state: \(error)")
+        return pixels // maybe bad return fix?
+    }
+
+    let commandQueue = device.makeCommandQueue()
+    let commandBuffer = commandQueue?.makeCommandBuffer()
+    
+    let cameraBuffer = device.makeBuffer(bytes: camerasGPU, length: camerasGPU.count * MemoryLayout<CameraGPU>.size, options: .storageModeShared)
+    // let trianglesBuffer = device.makeBuffer(bytes: trianglesGPU, length: trianglesGPU.count * MemoryLayout<TriangleGPU>.size, options: .storageModeShared)
+    let pixelsBuffer = device.makeBuffer(length: pixels.count * MemoryLayout<UInt8>.size, options: .storageModeShared)
+
+    let computeCommandEncoder = commandBuffer?.makeComputeCommandEncoder()
+    computeCommandEncoder?.setComputePipelineState(computePipeline)
+    computeCommandEncoder?.setBuffer(cameraBuffer, offset: 0, index: 0)
+    // computeCommandEncoder?.setBuffer(trianglesBuffer, offset: 0, index: 1)
+    computeCommandEncoder?.setBuffer(pixelsBuffer, offset: 0, index: 1)
+    computeCommandEncoder?.setAccelerationStructure(accelerationStructure, bufferIndex: 2)  // Add this
+
+    // sort out threads, can yoyu just do 32*32 even if it doesnt divide evenly?
+    let width = Int(camerasGPU[0].resolution.x)
+    let height = Int(camerasGPU[0].resolution.y)
+    let gridSize = MTLSize(width: width, height: height, depth: 1)
+
+    // let threadsPerThreadGroup = MTLSize(width: 32, height: 32, depth: 1)
+    let threadsPerThreadGroup = MTLSize(width: 16, height: 16, depth: 1)
+    // let threadsPerThreadGroup = MTLSize(width: 8, height: 8, depth: 1)
+
+    computeCommandEncoder?.dispatchThreads(gridSize, threadsPerThreadgroup: threadsPerThreadGroup)
+    computeCommandEncoder?.endEncoding()
+    commandBuffer?.commit()
+    commandBuffer?.waitUntilCompleted()
+
+    let pixelPtr = pixelsBuffer!.contents()
+    let count = pixels.count
+    let bufferPointer = pixelPtr.bindMemory(to: UInt8.self, capacity: count)
+    let pixelArray = Array(UnsafeBufferPointer(start: bufferPointer, count: count))
+    return pixelArray
+}
+
 func convertSpheres(spheres: [Sphere]) -> [SphereGPU] {
     return spheres.map { sphere in
         SphereGPU(
@@ -18,14 +150,6 @@ func convertSpheres(spheres: [Sphere]) -> [SphereGPU] {
             radius: sphere.radius
         )
     }
-}
-
-func convertMaterial(material: Material) -> MaterialGPU {
-    return MaterialGPU(
-        diffuse: material.diffuse,
-        metallic: material.metallic,
-        roughness: material.roughness
-    )
 }
 
 func convertCameras(cameras: [Camera]) -> [CameraGPU] {

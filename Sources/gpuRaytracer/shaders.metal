@@ -6,12 +6,104 @@
 //
 
 #include <metal_stdlib>
+#include <metal_raytracing>
 using namespace metal;
+using namespace raytracing;
 #include "shaderTypes.h"
 
 // kernel makes this a public gpu function. also defines it as a compute function/kernel which allows parallel calcuation with threads
 kernel void addArrays(device const float* arr1, device const float* arr2, device float* arr3, uint index [[thread_position_in_grid]]) {
     arr3[index] = arr1[index] + arr2[index];
+}
+
+// can typedef the intersection result type to make it easier to use
+// typedef intersector<triangle_data>::result_type IntersectionResult;
+
+// need explicity specify the accelerationstructure buffer
+kernel void drawTriangle(device const CameraGPU* cameras, device uchar* pixels, 
+primitive_acceleration_structure accelerationStructure [[buffer(2)]], 
+uint2 index [[thread_position_in_grid]]) {
+    CameraGPU camera = cameras[0];
+    float aspectRatio = float(camera.resolution.x / camera.resolution.y);
+    float halfWidth = tan(camera.horizontalFov / 2.0);
+    float halfHeight = halfWidth / aspectRatio;
+    
+    // Camera coord system
+    float3 w = -normalize(camera.direction);
+    float3 u = normalize(cross(camera.up, w));
+    float3 v = normalize(cross(w, u));
+    
+    int x = index.x;
+    int y = index.y;
+    if (x >= camera.resolution.x || y >= camera.resolution.y) return;
+    
+    float s = (float(x) / float(camera.resolution.x)) * 2.0 - 1.0;
+    float t = -((float(y) / float(camera.resolution.y)) * 2.0 - 1.0);
+
+    float3 dir = normalize(s * halfWidth * u + t * halfHeight * v - w);
+    
+    // RayGPU ray;
+    // ray.origin = camera.position;
+    // ray.direction = dir;
+    
+    // use metal ray since it the metal intersect needs min/max dist
+    ray r;
+    r.origin = camera.position;
+    r.direction = dir;
+    r.min_distance = 0.001f; // small epsilon to avoid self-intersection
+    r.max_distance = 1000.0f; 
+
+    // configures intersecttion test behaves
+    intersection_params params;
+    intersection_query<triangle_data> i;
+    params.assume_geometry_type(geometry_type::triangle); 
+    params.force_opacity(forced_opacity::opaque); // treats geometry as solid not transparent
+    params.accept_any_intersection(false); // find closests intersection not any hit
+
+    // init the intersection query with data
+    i.reset(r, accelerationStructure, params);
+
+    // performs the actual intersection - assuming you can keep hitting next to go through all intersections
+    i.next();
+
+    //intersector is metals built in ray tracing class that performs ray/geometry intersections
+    // triangle_data template param that tells us what kind of geometry we are intersecting
+    // different geometries have different result structures so we need to get the type
+    intersector<triangle_data>::result_type intersection;
+
+    // IntersectionResult intersection;
+    
+    // pull required info about the committed intersection.
+    intersection.type = i.get_committed_intersection_type(); // triangle, boundingbox, nothing, curve if implemented
+    // intersection.distance = i.get_committed_distance();
+    // intersection.primitive_id = i.get_committed_primitive_id();
+    // intersection.geometry_id = i.get_committed_geometry_id();
+    // intersection.triangle_barycentric_coord = i.get_committed_triangle_barycentric_coord();
+    // intersection.instance_id = i.get_committed_instance_id();
+    // intersection.object_to_world_transform = i.get_committed_object_to_world_transform();
+
+    // bool hit = intersector.intersect(r, accelerationStructure, 0, intersection);
+
+    int pixelOffset = (y * camera.resolution.x + x) * 4;
+    if (intersection.type == intersection_type::triangle) {
+    // if (hit) {
+        pixels[pixelOffset + 0] = 255; // R
+        pixels[pixelOffset + 1] = 0; // G
+        pixels[pixelOffset + 2] = 255; // B
+        // pixels[pixelOffset + 2] = 0; // B
+        pixels[pixelOffset + 3] = 255; // A
+    } else if (intersection.type == intersection_type::bounding_box) {
+        pixels[pixelOffset + 0] = 0; // R
+        pixels[pixelOffset + 1] = 255; // G
+        pixels[pixelOffset + 2] = 0; // B
+        pixels[pixelOffset + 3] = 255; // A
+    }
+    else {
+        pixels[pixelOffset + 0] = 0;   // R
+        pixels[pixelOffset + 1] = 0;   // G
+        pixels[pixelOffset + 2] = 0;   // B
+        pixels[pixelOffset + 3] = 255; // A
+    }
 }
 
 uint hash(uint x) {

@@ -10,46 +10,85 @@ import Metal
 import simd
 import MetalKit
 
-//setup scene
-
-let direction = simd_normalize(simd_float3(0, 0, 0) - simd_float3(13, 2, 3))
-let camera = Camera(position: simd_float3(13, 2, 3), direction: direction,
+let direction = simd_normalize(simd_float3(0, 0, 0) - simd_float3(5, 0, 0))
+let camera = Camera(position: simd_float3(5, 0, 0), direction: direction,
     resolution: simd_int2(400, 300), horizontalFov: Float.pi / 4.0)
-// let camera = Camera(position: simd_float3(13, 6, 3), direction: direction, // higher cam angle
-//     resolution: simd_int2(400, 300), horizontalFov: Float.pi / 4.0)
-let cameras = [camera]
 
-let lightBulb = SphereLight(center: simd_float3(3, 3, 3), color: simd_float4(1, 0.9, 0.7, 1), 
-    LightType: .bulb(efficacy: 15, watts: 60), radius: 0.1)
-// let lightBulb = SphereLight(center: simd_float3(3, 3, 3), color: simd_float4(1, 0.8, 0.4, 1),  // warmer light
-    // LightType: .bulb(efficacy: 15, watts: 60), radius: 0.1)
-var lights = [lightBulb]
-var ambientLight = simd_float4(0.53, 0.81, 0.92, 1) 
+let triangle = Triangle(
+    vertices: [
+        simd_float3(0, -1, -1), // bottom left
+        simd_float3(0,  1, -1), // top left
+        simd_float3(0,  0,  1)  // right
+    ],  
+    material: Material(diffuse: simd_float4(1, 0, 0, 1), metallic: 0.0, roughness: 0.5)
+)
 
-var spheres: [Sphere] = []
-let sphere1 = Sphere(center: simd_float3(4, 2, 0), 
-material: Material(diffuse: simd_float4(1, 0, 0, 1), metallic: 0.9, roughness: 0.1), 
-radius: 1.0) // front sphere
-let sphere2 = Sphere(center: simd_float3(0, 2, 0), 
-material: Material(diffuse: simd_float4(0, 1, 0, 1), metallic: 0.05, roughness: 0.1), 
-radius: 1.0) // middle sphere
-let sphere3 = Sphere(center: simd_float3(-4, 2, 0), 
-material: Material(diffuse: simd_float4(0, 0, 1, 1), metallic: 0.1, roughness: 0.9), 
-radius: 1.0) // back sphere
-let ground = Sphere(center: simd_float3(0, -100, 0), 
-material: Material(diffuse: simd_float4(0.2, 0.2, 0.2, 1), metallic: 0.0, roughness: 0.9), 
-radius: 100.0) // ground sphere
-spheres.append(sphere1)
-spheres.append(sphere2)
-spheres.append(sphere3)
-spheres.append(ground)
-render()
+let width = Int(camera.resolution.x)
+let height = Int(camera.resolution.y)
+let pixelCount = width * height
+// Pre-allocate pixels array with black transparent pixels
+var pixels = [UInt8](repeating: 0, count: pixelCount * 4)
+
+// Create a Metal device
+let device = MTLCreateSystemDefaultDevice()!
+// Check if ray tracing is supported
+guard device.supportsRaytracing else {
+    print("Ray tracing not supported on this device")
+    exit(1)
+}
+// make accel structures
+let accelerationStructures = setupAccelerationStructures(device: device, triangles: [triangle])
+// dont need render pipeline since we aren't rendering to screen - send to compute pipe
+pixels = drawTriangle(device: device, cameras: [camera], pixels: pixels, accelerationStructure: accelerationStructures)
+
+savePixelArrayToImage(pixels: pixels, width: width, height: height, fileName: "triangle.png")
+
+struct Triangle {
+    var vertices: [simd_float3]
+    var material: Material
+}
 
 
+//setup scene
+func rayTraceScene() {
+    let direction = simd_normalize(simd_float3(0, 0, 0) - simd_float3(13, 2, 3))
+    let camera = Camera(position: simd_float3(13, 2, 3), direction: direction,
+        resolution: simd_int2(400, 300), horizontalFov: Float.pi / 4.0)
+    // let camera = Camera(position: simd_float3(13, 6, 3), direction: direction, // higher cam angle
+    //     resolution: simd_int2(400, 300), horizontalFov: Float.pi / 4.0)
+    let cameras = [camera]
 
-func render() {
+    let lightBulb = SphereLight(center: simd_float3(3, 3, 3), color: simd_float4(1, 0.9, 0.7, 1), 
+        LightType: .bulb(efficacy: 15, watts: 60), radius: 0.1)
+    // let lightBulb = SphereLight(center: simd_float3(3, 3, 3), color: simd_float4(1, 0.8, 0.4, 1),  // warmer light
+        // LightType: .bulb(efficacy: 15, watts: 60), radius: 0.1)
+    var lights = [lightBulb]
+    var ambientLight = simd_float4(0.53, 0.81, 0.92, 1) 
+
+    var spheres: [Sphere] = []
+    let sphere1 = Sphere(center: simd_float3(4, 2, 0), 
+    material: Material(diffuse: simd_float4(1, 0, 0, 1), metallic: 0.9, roughness: 0.1), 
+    radius: 1.0) // front sphere
+    let sphere2 = Sphere(center: simd_float3(0, 2, 0), 
+    material: Material(diffuse: simd_float4(0, 1, 0, 1), metallic: 0.05, roughness: 0.1), 
+    radius: 1.0) // middle sphere
+    let sphere3 = Sphere(center: simd_float3(-4, 2, 0), 
+    material: Material(diffuse: simd_float4(0, 0, 1, 1), metallic: 0.1, roughness: 0.9), 
+    radius: 1.0) // back sphere
+    let ground = Sphere(center: simd_float3(0, -100, 0), 
+    material: Material(diffuse: simd_float4(0.2, 0.2, 0.2, 1), metallic: 0.0, roughness: 0.9), 
+    radius: 100.0) // ground sphere
+    spheres.append(sphere1)
+    spheres.append(sphere2)
+    spheres.append(sphere3)
+    spheres.append(ground)
+
+    render(cameras: cameras, spheres: spheres, lights: lights, ambientLight: ambientLight)
+}
+
+func render(cameras: [Camera] = [], spheres: [Sphere] = [], lights: [SphereLight] = [], ambientLight: simd_float4 = simd_float4(0.53, 0.81, 0.92, 1)) {
     let startTime = DispatchTime.now()
-
+    let camera = cameras[0]
     let width = Int(camera.resolution.x)
     let height = Int(camera.resolution.y)
     let pixelCount = width * height
@@ -118,7 +157,7 @@ struct Camera {
     var up: simd_float3 = simd_float3(0, 1, 0) // assuming camera's up vector is positive y-axis
     var resolution: simd_int2
     var horizontalFov: Float // field of view in radians
-    var ev100: Float = 4.0 // lower ev100 makes light brighter, doesnt seem to impact rest of scene
+    var ev100: Float = 0.5 // lower ev100 makes light brighter, doesnt seem to impact rest of scene
     
     // func exposure() -> Float {
     //     return 1.0 / pow(2.0, ev100 * 1.2)

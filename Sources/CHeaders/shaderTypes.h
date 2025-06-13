@@ -10,12 +10,16 @@
 
 #include <simd/simd.h>
 
-//order matters
 typedef struct {
-    simd_float4 diffuse;
-    float metallic;
-    float roughness;
+    simd_float4 diffuse; 
+    float metallic;     
+    float roughness;      
 } MaterialGPU;
+
+typedef struct {
+    simd_float3 vertices[3];
+    MaterialGPU material;
+} TriangleGPU;
 
 typedef struct {
     simd_float3 center;
