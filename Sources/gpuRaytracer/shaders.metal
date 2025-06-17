@@ -63,6 +63,37 @@ float randomFloat(uint seed) {
     return float(hash(seed)) / (float(0xffffffffU) + 1.0);
 }
 
+// Radical inverse function for base 2 (Van der Corput sequence)
+float radicalInverse2(uint bits) {
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xaaaaaaaau) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xccccccccu) >> 2u);
+    bits = ((bits & 0x0f0f0f0fu) << 4u) | ((bits & 0xf0f0f0f0u) >> 4u);
+    bits = ((bits & 0x00ff00ffu) << 8u) | ((bits & 0xff00ff00u) >> 8u);
+    return float(bits) * 2.3283064365386963e-10; // / 0x100000000
+}
+
+// Hammersley point generation (2D low-discrepancy sequence)
+// good for 2d sampling e.g. area light, texture sampling,
+// screen-space sampling, any correlated 2d points
+float2 hammersley2D(uint i, uint N) {
+    return float2(float(i) / float(N), radicalInverse2(i));
+}
+
+// Hammersley-based random float (much better distribution)
+// better for 3d/4d sampling, independant random numbers
+float hammersleyFloat(uint index, uint dimension, uint totalSamples) {
+    if (dimension == 0) {
+        return float(index) / float(totalSamples);
+    } else if (dimension == 1) {
+        return radicalInverse2(index);
+    } else {
+        // For higher dimensions, use scrambled radical inverse
+        uint scrambledIndex = hash(index + dimension * 12345);
+        return radicalInverse2(scrambledIndex);
+    }
+}
+
 // Power heuristic for MIS
 float powerHeuristic(float pdf1, float pdf2, float pdf3, float beta) {
     float p1 = pow(pdf1, beta);
@@ -194,15 +225,40 @@ OrthonormalBasisGPU buildOrthonormalBasis(float3 normal) {
     return basis;
 }
 
-SampleResultGPU sampleBoxLight(BoxLightGPU light, float3 point, uint2 index, uint sampleIndex) {
-    uint seed1 = hash(index.x + index.y * 1920 + sampleIndex * 3840);
-    uint seed2 = hash(index.y + index.x * 1080 + sampleIndex * 7680 + 12345);
-    uint seed3 = hash(index.x * 2 + index.y * 3 + sampleIndex * 5432 + 54321);
+uint nextPowerOfTwo(uint n) {
+    if (n == 0) return 1;
+    n--;
+    n |= n >> 1;
+    n |= n >> 2;
+    n |= n >> 4;
+    n |= n >> 8;
+    n |= n >> 16;
+    n++;
+    return n;
+}
+
+// doesnt sample visible faces only but apparently this is fine since we do shadow ray test later
+// probably mroe efficient if we sample only visible faces?
+SampleResultGPU sampleBoxLight(BoxLightGPU light, float3 point, uint2 index, uint sampleIndex, uint samples, uint i) {
+    // uint seed1 = hash(index.x + index.y * 1920 + sampleIndex * 3840);
+    // uint seed2 = hash(index.y + index.x * 1080 + sampleIndex * 7680 + 12345);
+    // uint seed3 = hash(index.x * 2 + index.y * 3 + sampleIndex * 5432 + 54321);
     
-    float u1 = randomFloat(seed1);
-    float u2 = randomFloat(seed2);
-    float u3 = randomFloat(seed3);
-    
+    // float u1 = randomFloat(seed1);
+    // float u2 = randomFloat(seed2);
+    // float u3 = randomFloat(seed3);
+
+    uint pow2 = nextPowerOfTwo(samples); // find smallest pow2 greater than number
+    // uint scrambledId = sampleIndex ^ hash(index.x + index.y * 800);
+    // hammersly2D better results with first argument value between 0 to (sampleCount per pixel - 1)
+    // so we pass i instead of sampleIndex or scramledID
+    float2 u = hammersley2D(i, pow2);
+    float u1 = u.x;
+    float u2 = u.y;
+    // float u3 = hammersleyFloat(sampleIndex, 2, pow2); 
+    // also expectting value between 0 - (sampleCount per pixel - 1)
+    float u3 = hammersleyFloat(i, 2, pow2); 
+
     // Box light dimensions
     float halfWidth = light.width * 0.5;
     float halfHeight = light.height * 0.5;
@@ -352,12 +408,19 @@ SampleResultGPU sampleSphereLight(SphereLightGPU light, float3 point, uint2 inde
 }
 
 // Cosine-weighted hemisphere sampling
-SampleResultGPU sampleCosineWeighted(float3 normal, uint2 index, uint sampleIndex) {
-    uint seed1 = hash(index.x + index.y * 1920 + sampleIndex * 3840);
-    uint seed2 = hash(index.y + index.x * 1080 + sampleIndex * 7680 + 12345);
+SampleResultGPU sampleCosineWeighted(float3 normal, uint2 index, uint sampleIndex, uint samples, uint i) {
+    // uint seed1 = hash(index.x + index.y * 1920 + sampleIndex * 3840);
+    // uint seed2 = hash(index.y + index.x * 1080 + sampleIndex * 7680 + 12345);
     
-    float u1 = randomFloat(seed1);
-    float u2 = randomFloat(seed2);
+    // float u1 = randomFloat(seed1);
+    // float u2 = randomFloat(seed2);
+
+    uint pow2 = nextPowerOfTwo(samples); // find smallest pow2 greater than number
+    // uint scrambledId = sampleIndex ^ hash(index.x + index.y * 800);
+    float2 u = hammersley2D(i, pow2); // Use Hammersley sequence for better distribution
+    // float2 u = hammersley2D(sampleIndex, samples); // Use Hammersley sequence for better distribution
+    float u1 = u.x;
+    float u2 = u.y;
     
     float phi = 2.0 * M_PI_F * u1;
     float cosTheta = sqrt(u2);
@@ -395,7 +458,8 @@ float D_GGX(float NoH, float a) {
 }
 
 // VNDF sampling
-SampleResultGPU sampleVNDF(float3 viewDir, float3 normal, float roughness, uint2 index, uint sampleIndex) {
+SampleResultGPU sampleVNDF(float3 viewDir, float3 normal, float roughness, uint2 index, uint sampleIndex, 
+uint samples, uint i) {
     float alpha = roughness * roughness;
     
     // Step 1: Transform view direction to local space and stretch it
@@ -410,12 +474,22 @@ SampleResultGPU sampleVNDF(float3 viewDir, float3 normal, float roughness, uint2
     float3 T1 = normalize(float3(Ve.z, 0, -Ve.x));
     float3 T2 = cross(Ve, T1);
     
-    // Step 3: Sample point with polar coordinates
-    uint seed1 = hash(index.x + index.y * 1920 + sampleIndex * 3840);
-    uint seed2 = hash(index.y + index.x * 1080 + sampleIndex * 7680 + 12345);
+    // // Step 3: Sample point with polar coordinates
+    // uint seed1 = hash(index.x + index.y * 1920 + sampleIndex * 3840);
+    // uint seed2 = hash(index.y + index.x * 1080 + sampleIndex * 7680 + 12345);
     
-    float u1 = randomFloat(seed1);
-    float u2 = randomFloat(seed2);
+    // float u1 = randomFloat(seed1);
+    // float u2 = randomFloat(seed2);
+    uint pow2 = nextPowerOfTwo(samples); // find smallest pow2 greater than number
+    // float u1 = hammersleyFloat(sampleIndex, 0, samples);
+    // float u2 = hammersleyFloat(sampleIndex, 1, samples);
+    
+    // float2 u = hammersley2D(i, samples); // also works, might be better // probably faster
+    // might be best in future to hard code this value based on sampleSize
+    float2 u = hammersley2D(i, pow2); // where i is your per-pixel sample index in [0, samples-1]
+    float u1 = u.x;
+    float u2 = u.y;
+
     float phi = 2.0 * M_PI_F * u1;
     
     // Transform Ve to the hemisphere configuration
@@ -595,148 +669,148 @@ float3 calculateBRDFContribution(RayGPU ray, float3 point, float3 normal, Materi
     return finalColor;
 }
 
-float3 calculateTotalLighting(IntersectionGPU intersection, uint samples, RayGPU ray, uint2 index, 
-device const SphereGPU* spheres, constant uint& sphereCount, device const SphereLightGPU* lights, 
-constant uint& lightCount) {
-    SphereLightGPU light = lights[0]; // one light only atm - fix later
-    float3 totalLight = float3(0.0, 0.0, 0.0);
-    uint samplesPerStrategy = samples / 3;
-    // float scaleFactor = 3.0; // Scale factor to balance contributions from different strategies
-    float beta = 2.0; // Power heuristic exponent
+// float3 calculateTotalLighting(IntersectionGPU intersection, uint samples, RayGPU ray, uint2 index, 
+// device const SphereGPU* spheres, constant uint& sphereCount, device const SphereLightGPU* lights, 
+// constant uint& lightCount) {
+//     SphereLightGPU light = lights[0]; // one light only atm - fix later
+//     float3 totalLight = float3(0.0, 0.0, 0.0);
+//     uint samplesPerStrategy = samples / 3;
+//     // float scaleFactor = 3.0; // Scale factor to balance contributions from different strategies
+//     float beta = 2.0; // Power heuristic exponent
 
-    for (uint i = 0; i < samplesPerStrategy; i++) {
-        // Sample direct light
-        SampleResultGPU lightSample = sampleSphereLight(light, intersection.point, index, i);
+//     for (uint i = 0; i < samplesPerStrategy; i++) {
+//         // Sample direct light
+//         SampleResultGPU lightSample = sampleSphereLight(light, intersection.point, index, i);
 
-        // Calculate PDFs for other strategies
-        float cosineWeightedPdf = max(dot(intersection.normal, lightSample.direction), 0.0) / M_PI_F;
-        float vndfPdf = calculateVNDFPdf(-ray.direction, intersection.normal, lightSample.direction, intersection.material.roughness);
+//         // Calculate PDFs for other strategies
+//         float cosineWeightedPdf = max(dot(intersection.normal, lightSample.direction), 0.0) / M_PI_F;
+//         float vndfPdf = calculateVNDFPdf(-ray.direction, intersection.normal, lightSample.direction, intersection.material.roughness);
 
-        float3 radiance = traceLightRay(intersection.point, lightSample.direction, 
-        spheres, sphereCount, lights, lightCount);
-        if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
-            float weight = powerHeuristic(lightSample.pdf, cosineWeightedPdf, vndfPdf, beta);
-            float3 brdf = calculateBRDFContribution(ray, intersection.point, intersection.normal,
-            intersection.material, lightSample.direction, radiance);
-            totalLight += brdf * weight / lightSample.pdf;
-        }
-    }
-    for (uint i = 0; i < samplesPerStrategy; i++) {
-        // Sample cosine-weighted hemisphere
-        SampleResultGPU cosineSample = sampleCosineWeighted(intersection.normal, index, i + samplesPerStrategy);
+//         float3 radiance = traceLightRay(intersection.point, lightSample.direction, 
+//         spheres, sphereCount, lights, lightCount);
+//         if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
+//             float weight = powerHeuristic(lightSample.pdf, cosineWeightedPdf, vndfPdf, beta);
+//             float3 brdf = calculateBRDFContribution(ray, intersection.point, intersection.normal,
+//             intersection.material, lightSample.direction, radiance);
+//             totalLight += brdf * weight / lightSample.pdf;
+//         }
+//     }
+//     for (uint i = 0; i < samplesPerStrategy; i++) {
+//         // Sample cosine-weighted hemisphere
+//         SampleResultGPU cosineSample = sampleCosineWeighted(intersection.normal, index, i + samplesPerStrategy, samples);
         
-        // Calculate PDFs for other strategies
-        float lightPdf = calculateLightPdf(light, intersection.point, cosineSample.direction);
-        float vndfPdf = calculateVNDFPdf(-ray.direction, intersection.normal, cosineSample.direction, intersection.material.roughness);
+//         // Calculate PDFs for other strategies
+//         float lightPdf = calculateLightPdf(light, intersection.point, cosineSample.direction);
+//         float vndfPdf = calculateVNDFPdf(-ray.direction, intersection.normal, cosineSample.direction, intersection.material.roughness);
 
-        float3 radiance = traceLightRay(intersection.point, cosineSample.direction, 
-        spheres, sphereCount, lights, lightCount);
-        if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
-            float weight = powerHeuristic(cosineSample.pdf, lightPdf, vndfPdf, beta);
-            float3 brdf = calculateBRDFContribution(ray, intersection.point, intersection.normal,
-            intersection.material, cosineSample.direction, radiance);
-            totalLight += brdf * weight / cosineSample.pdf;
-        }
-    }
-    for (uint i = 0; i < samplesPerStrategy; i++) {
-        // Sample VNDF
-        SampleResultGPU vndfSample = sampleVNDF(-ray.direction, intersection.normal, 
-        intersection.material.roughness, index, i + 2 * samplesPerStrategy);
+//         float3 radiance = traceLightRay(intersection.point, cosineSample.direction, 
+//         spheres, sphereCount, lights, lightCount);
+//         if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
+//             float weight = powerHeuristic(cosineSample.pdf, lightPdf, vndfPdf, beta);
+//             float3 brdf = calculateBRDFContribution(ray, intersection.point, intersection.normal,
+//             intersection.material, cosineSample.direction, radiance);
+//             totalLight += brdf * weight / cosineSample.pdf;
+//         }
+//     }
+//     for (uint i = 0; i < samplesPerStrategy; i++) {
+//         // Sample VNDF
+//         SampleResultGPU vndfSample = sampleVNDF(-ray.direction, intersection.normal, 
+//         intersection.material.roughness, index, i + 2 * samplesPerStrategy, samples);
         
-        // Calculate PDFs for other strategies
-        float lightPdf = calculateLightPdf(light, intersection.point, vndfSample.direction);
-        float cosineWeightedPdf = max(dot(intersection.normal, vndfSample.direction), 0.0) / M_PI_F;
+//         // Calculate PDFs for other strategies
+//         float lightPdf = calculateLightPdf(light, intersection.point, vndfSample.direction);
+//         float cosineWeightedPdf = max(dot(intersection.normal, vndfSample.direction), 0.0) / M_PI_F;
 
-        float3 radiance = traceLightRay(intersection.point, vndfSample.direction, 
-        spheres, sphereCount, lights, lightCount);
-        if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
-            float weight = powerHeuristic(vndfSample.pdf, lightPdf, cosineWeightedPdf, beta);
-            float3 brdf = calculateBRDFContribution(ray, intersection.point, intersection.normal,
-            intersection.material, vndfSample.direction, radiance);
-            totalLight += brdf * weight / vndfSample.pdf;
-        }
-    }
-    return totalLight;
-    // return totalLight / 3;
-    // return totalLight / float (samplesPerStrategy * 3); 
-    // return totalLight / float (samplesPerStrategy); 
-}
+//         float3 radiance = traceLightRay(intersection.point, vndfSample.direction, 
+//         spheres, sphereCount, lights, lightCount);
+//         if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
+//             float weight = powerHeuristic(vndfSample.pdf, lightPdf, cosineWeightedPdf, beta);
+//             float3 brdf = calculateBRDFContribution(ray, intersection.point, intersection.normal,
+//             intersection.material, vndfSample.direction, radiance);
+//             totalLight += brdf * weight / vndfSample.pdf;
+//         }
+//     }
+//     return totalLight;
+//     // return totalLight / 3;
+//     // return totalLight / float (samplesPerStrategy * 3); 
+//     // return totalLight / float (samplesPerStrategy); 
+// }
 
-kernel void draw(device const CameraGPU* cameras, device const SphereGPU* spheres, 
-constant uint& sphereCount, device uchar* pixels, device const SphereLightGPU* lights, 
-constant uint& lightCount, device const float4* ambientLight, uint2 index [[thread_position_in_grid]]) {
-    // gen rays
-    CameraGPU camera = cameras[0];
-    float aspectRatio = float(camera.resolution.x / camera.resolution.y);
-    float halfWidth = tan(camera.horizontalFov / 2.0);
-    float halfHeight = halfWidth / aspectRatio;
+// kernel void draw(device const CameraGPU* cameras, device const SphereGPU* spheres, 
+// constant uint& sphereCount, device uchar* pixels, device const SphereLightGPU* lights, 
+// constant uint& lightCount, device const float4* ambientLight, uint2 index [[thread_position_in_grid]]) {
+//     // gen rays
+//     CameraGPU camera = cameras[0];
+//     float aspectRatio = float(camera.resolution.x / camera.resolution.y);
+//     float halfWidth = tan(camera.horizontalFov / 2.0);
+//     float halfHeight = halfWidth / aspectRatio;
     
-    // Camera coord system
-    float3 w = -normalize(camera.direction);
-    float3 u = normalize(cross(camera.up, w));
-    float3 v = normalize(cross(w, u));
+//     // Camera coord system
+//     float3 w = -normalize(camera.direction);
+//     float3 u = normalize(cross(camera.up, w));
+//     float3 v = normalize(cross(w, u));
     
-    int x = index.x;
-    int y = index.y;
-    if (x >= camera.resolution.x || y >= camera.resolution.y) return;
+//     int x = index.x;
+//     int y = index.y;
+//     if (x >= camera.resolution.x || y >= camera.resolution.y) return;
     
-    float s = (float(x) / float(camera.resolution.x)) * 2.0 - 1.0;
-    float t = -((float(y) / float(camera.resolution.y)) * 2.0 - 1.0);
+//     float s = (float(x) / float(camera.resolution.x)) * 2.0 - 1.0;
+//     float t = -((float(y) / float(camera.resolution.y)) * 2.0 - 1.0);
 
-    float3 dir = normalize(s * halfWidth * u + t * halfHeight * v - w);
+//     float3 dir = normalize(s * halfWidth * u + t * halfHeight * v - w);
     
-    RayGPU ray;
-    ray.origin = camera.position;
-    ray.direction = dir;
+//     RayGPU ray;
+//     ray.origin = camera.position;
+//     ray.direction = dir;
 
-    int pixelOffset = (y * camera.resolution.x + x) * 4;
+//     int pixelOffset = (y * camera.resolution.x + x) * 4;
 
-    IntersectionGPU closestIntersection = getClosestIntersection(ray, spheres, sphereCount, lights, lightCount);
-    switch (closestIntersection.type) {
-        case Hit: {
-            uint samples = 20;
-            float3 totalLight = calculateTotalLighting(closestIntersection, samples, ray, index, 
-            spheres, sphereCount, lights, lightCount);
-            float4 color = reinhartToneMapping(totalLight * cameraExposure(camera));
-            pixels[pixelOffset + 0] = uchar(color.r * 255); // R
-            pixels[pixelOffset + 1] = uchar(color.g * 255); // G
-            pixels[pixelOffset + 2] = uchar(color.b * 255); // B
-            pixels[pixelOffset + 3] = uchar(color.a * 255); // A
-            break;
+//     IntersectionGPU closestIntersection = getClosestIntersection(ray, spheres, sphereCount, lights, lightCount);
+//     switch (closestIntersection.type) {
+//         case Hit: {
+//             uint samples = 20;
+//             float3 totalLight = calculateTotalLighting(closestIntersection, samples, ray, index, 
+//             spheres, sphereCount, lights, lightCount);
+//             float4 color = reinhartToneMapping(totalLight * cameraExposure(camera));
+//             pixels[pixelOffset + 0] = uchar(color.r * 255); // R
+//             pixels[pixelOffset + 1] = uchar(color.g * 255); // G
+//             pixels[pixelOffset + 2] = uchar(color.b * 255); // B
+//             pixels[pixelOffset + 3] = uchar(color.a * 255); // A
+//             break;
 
-            // // Simple Lambert lighting for debugging
-            // float3 lightPos = float3(3, 3, 3); // Your light position
-            // float3 lightDir = normalize(lightPos - closestIntersection.point);
-            // float lambert = max(0.0, dot(closestIntersection.normal, lightDir));
+//             // // Simple Lambert lighting for debugging
+//             // float3 lightPos = float3(3, 3, 3); // Your light position
+//             // float3 lightDir = normalize(lightPos - closestIntersection.point);
+//             // float lambert = max(0.0, dot(closestIntersection.normal, lightDir));
             
-            // float3 ambient = closestIntersection.material.diffuse.rgb * 0.2;
-            // float3 diffuse = closestIntersection.material.diffuse.rgb * lambert;
-            // float3 finalColor = ambient + diffuse;
+//             // float3 ambient = closestIntersection.material.diffuse.rgb * 0.2;
+//             // float3 diffuse = closestIntersection.material.diffuse.rgb * lambert;
+//             // float3 finalColor = ambient + diffuse;
             
-            // pixels[pixelOffset + 0] = uchar(clamp(finalColor.r, 0.0, 1.0) * 255);
-            // pixels[pixelOffset + 1] = uchar(clamp(finalColor.g, 0.0, 1.0) * 255);
-            // pixels[pixelOffset + 2] = uchar(clamp(finalColor.b, 0.0, 1.0) * 255);
-            // pixels[pixelOffset + 3] = 255;
-            // break;
-        }
-        case HitLight: {
-            float3 totalLight = closestIntersection.radiance;
-            float4 color = reinhartToneMapping(totalLight * cameraExposure(camera));
-            pixels[pixelOffset + 0] = uchar(color.r * 255); // R
-            pixels[pixelOffset + 1] = uchar(color.g * 255); // G
-            pixels[pixelOffset + 2] = uchar(color.b * 255); // B
-            pixels[pixelOffset + 3] = uchar(color.a * 255); // A
-            break;
-        }
-        case Miss:
-        default:
-            pixels[pixelOffset + 0] = uchar(ambientLight[0].r * 255); // R
-            pixels[pixelOffset + 1] = uchar(ambientLight[0].g * 255); // G
-            pixels[pixelOffset + 2] = uchar(ambientLight[0].b * 255); // B
-            pixels[pixelOffset + 3] = uchar(ambientLight[0].a * 255); // A
-            break;
-    }
-}
+//             // pixels[pixelOffset + 0] = uchar(clamp(finalColor.r, 0.0, 1.0) * 255);
+//             // pixels[pixelOffset + 1] = uchar(clamp(finalColor.g, 0.0, 1.0) * 255);
+//             // pixels[pixelOffset + 2] = uchar(clamp(finalColor.b, 0.0, 1.0) * 255);
+//             // pixels[pixelOffset + 3] = 255;
+//             // break;
+//         }
+//         case HitLight: {
+//             float3 totalLight = closestIntersection.radiance;
+//             float4 color = reinhartToneMapping(totalLight * cameraExposure(camera));
+//             pixels[pixelOffset + 0] = uchar(color.r * 255); // R
+//             pixels[pixelOffset + 1] = uchar(color.g * 255); // G
+//             pixels[pixelOffset + 2] = uchar(color.b * 255); // B
+//             pixels[pixelOffset + 3] = uchar(color.a * 255); // A
+//             break;
+//         }
+//         case Miss:
+//         default:
+//             pixels[pixelOffset + 0] = uchar(ambientLight[0].r * 255); // R
+//             pixels[pixelOffset + 1] = uchar(ambientLight[0].g * 255); // G
+//             pixels[pixelOffset + 2] = uchar(ambientLight[0].b * 255); // B
+//             pixels[pixelOffset + 3] = uchar(ambientLight[0].a * 255); // A
+//             break;
+//     }
+// }
 
 
 float3 calculateLighting(IntersectionGPU intersection, uint samples, RayGPU ray, uint2 index, BoxLightGPU light, 
@@ -749,12 +823,13 @@ primitive_acceleration_structure accelerationStructure, device const MaterialGPU
     uint imageWidth = 800; 
     for (uint i = 0; i < samplesPerStrategy; i++) {
         // Sample box light
-        uint sampleId = (index.y * imageWidth + index.x) * samples + i;
-        SampleResultGPU lightSample = sampleBoxLight(light, intersection.point, index, sampleId);
+        uint sampleId = (index.y * imageWidth + index.x) * (samplesPerStrategy) + i;
+        SampleResultGPU lightSample = sampleBoxLight(light, intersection.point, index, sampleId, samplesPerStrategy, i);
 
         // Calculate PDFs for other strategies
         float cosineWeightedPdf = max(dot(intersection.normal, lightSample.direction), 0.0) / M_PI_F;
-        float vndfPdf = calculateVNDFPdf(-ray.direction, intersection.normal, lightSample.direction, intersection.material.roughness);
+        float vndfPdf = calculateVNDFPdf(-ray.direction, intersection.normal, lightSample.direction, 
+        intersection.material.roughness);
 
         float3 radiance = traceTriangleLightRay(intersection.point, lightSample.direction, accelerationStructure, materials);
         if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
@@ -766,12 +841,14 @@ primitive_acceleration_structure accelerationStructure, device const MaterialGPU
     }
     for (uint i = 0; i < samplesPerStrategy; i++) {
         // Sample cosine-weighted hemisphere
-        uint sampleId = (index.y * imageWidth + index.x) * samples + i;
-        SampleResultGPU cosineSample = sampleCosineWeighted(intersection.normal, index, sampleId);
+        uint sampleId = (index.y * imageWidth + index.x) * (samplesPerStrategy) + i;
+        SampleResultGPU cosineSample = sampleCosineWeighted(intersection.normal, index, sampleId, 
+        samplesPerStrategy, i + samplesPerStrategy); // use i+ samplesPerStrategy to avoid correlation between two strategies
         
         // Calculate PDFs for other strategies
         float lightPdf = calculateBoxLightPdf(light, intersection.point, cosineSample.direction);
-        float vndfPdf = calculateVNDFPdf(-ray.direction, intersection.normal, cosineSample.direction, intersection.material.roughness);
+        float vndfPdf = calculateVNDFPdf(-ray.direction, intersection.normal, cosineSample.direction, 
+        intersection.material.roughness);
 
         float3 radiance = traceTriangleLightRay(intersection.point, cosineSample.direction, accelerationStructure, materials);
         if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
@@ -783,9 +860,9 @@ primitive_acceleration_structure accelerationStructure, device const MaterialGPU
     }
     for (uint i = 0; i < samplesPerStrategy; i++) {
         // Sample VNDF
-        uint sampleId = (index.y * imageWidth + index.x) * samples + i;
+        uint sampleId = (index.y * imageWidth + index.x) * (samplesPerStrategy) + i;
         SampleResultGPU vndfSample = sampleVNDF(-ray.direction, intersection.normal, 
-        intersection.material.roughness, index, sampleId);
+        intersection.material.roughness, index, sampleId, samplesPerStrategy, i + 2 * samplesPerStrategy);
         
         // Calculate PDFs for other strategies
         float lightPdf = calculateBoxLightPdf(light, intersection.point, vndfSample.direction);
@@ -902,7 +979,7 @@ primitive_acceleration_structure accelerationStructure [[buffer(5)]], uint2 inde
             } // triangle winding should be fixed
 
             // hit a regular triangle
-            int samples = 100;
+            int samples = 1000;
             IntersectionGPU closestIntersection;
             closestIntersection.type = Hit;
             closestIntersection.point = r.origin + r.direction * intersection.distance;
