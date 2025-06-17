@@ -14,7 +14,8 @@ func convertMaterial(material: Material) -> MaterialGPU {
     return MaterialGPU(
         diffuse: material.diffuse,
         metallic: material.metallic,
-        roughness: material.roughness
+        roughness: material.roughness,
+        emissive: material.emissive
     )
 }
 
@@ -29,11 +30,28 @@ func convertTriangle(triangles: [Triangle]) -> [TriangleGPU] {
     }
 }
 
+func convertBoxLight(boxLight: BoxLight) -> BoxLightGPU {
+    return BoxLightGPU(
+        center: boxLight.center,
+        color: boxLight.material.diffuse,
+        emittedRadiance: boxLight.emittedRadiance,
+        width: boxLight.width,
+        height: boxLight.height,
+        depth: boxLight.depth,
+    )
+}
+
 // must be setup in separate command to actual ray trace calc. ray trace needs complete accel structure anyway.
 // uses different command encoder than compute or render
-func setupAccelerationStructures(device: MTLDevice, triangles: [Triangle]) -> MTLAccelerationStructure {
+func setupAccelerationStructures(device: MTLDevice, triangles: [Triangle]) -> MTLAccelerationStructure { 
+
+    // flatten triangle verts into one array
+    var allVertices: [simd_float3] = []
+    for triangle in triangles {
+        allVertices.append(contentsOf: triangle.vertices)
+    }
     // vertex buffer
-    let vertexData = triangles[0].vertices.withUnsafeBufferPointer { buffer in
+    let vertexData = allVertices.withUnsafeBufferPointer { buffer in
         Data(buffer: buffer)
     }
     let vertexBuffer = device.makeBuffer(bytes: vertexData.withUnsafeBytes { $0.bindMemory(to: Float.self).baseAddress! }, 
@@ -46,7 +64,7 @@ func setupAccelerationStructures(device: MTLDevice, triangles: [Triangle]) -> MT
     geometryDescriptor.vertexBuffer = vertexBuffer
     geometryDescriptor.vertexBufferOffset = 0
     geometryDescriptor.vertexStride = MemoryLayout<simd_float3>.stride
-    geometryDescriptor.triangleCount = triangles.count // = 1 right now
+    geometryDescriptor.triangleCount = triangles.count // = 12 right now
 
     // primitive acceleration structure descriptor, tells gpu which geometry prims (triangles),
     // how geometry is in memory which will be used to make the acceleration structure
@@ -79,10 +97,18 @@ func setupAccelerationStructures(device: MTLDevice, triangles: [Triangle]) -> MT
     return accelerationStructure
 }
 
-func drawTriangle(device: MTLDevice, cameras: [Camera], pixels: [UInt8], 
+func drawTriangle(device: MTLDevice, cameras: [Camera], triangles: [Triangle], boxLights: [BoxLight], pixels: [UInt8], 
 accelerationStructure : MTLAccelerationStructure) -> [UInt8] {
     let camerasGPU = convertCameras(cameras: cameras)
     // let trianglesGPU = convertTriangle(triangles: triangles)
+    let materialsGPU = triangles.map { convertMaterial(material: $0.material) }
+    let boxLightsGPU = [convertBoxLight(boxLight: boxLights[0])]
+    // triangle verts needed for normal calc - cant pull from accel structure
+    var allVertices: [simd_float3] = []
+    for triangle in triangles {
+        allVertices.append(contentsOf: triangle.vertices)
+    }
+
 
     let metalLibURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         .appendingPathComponent("Sources/gpuRaytracer/MyMetalLib.metallib")
@@ -110,16 +136,25 @@ accelerationStructure : MTLAccelerationStructure) -> [UInt8] {
     let commandQueue = device.makeCommandQueue()
     let commandBuffer = commandQueue?.makeCommandBuffer()
     
-    let cameraBuffer = device.makeBuffer(bytes: camerasGPU, length: camerasGPU.count * MemoryLayout<CameraGPU>.size, options: .storageModeShared)
-    // let trianglesBuffer = device.makeBuffer(bytes: trianglesGPU, length: trianglesGPU.count * MemoryLayout<TriangleGPU>.size, options: .storageModeShared)
-    let pixelsBuffer = device.makeBuffer(length: pixels.count * MemoryLayout<UInt8>.size, options: .storageModeShared)
+    let cameraBuffer = device.makeBuffer(bytes: camerasGPU, 
+    length: camerasGPU.count * MemoryLayout<CameraGPU>.size, options: .storageModeShared)
+    let materialsBuffer = device.makeBuffer(bytes: materialsGPU, 
+    length: materialsGPU.count * MemoryLayout<MaterialGPU>.size, options: .storageModeShared)
+    let pixelsBuffer = device.makeBuffer(length: pixels.count * MemoryLayout<UInt8>.size, 
+    options: .storageModeShared)
+    let boxLightsBuffer = device.makeBuffer(bytes: boxLightsGPU,
+    length: boxLightsGPU.count * MemoryLayout<BoxLightGPU>.size, options: .storageModeShared)
+    let vertexBuffer = device.makeBuffer(bytes: allVertices,
+    length: allVertices.count * MemoryLayout<simd_float3>.size, options: .storageModeShared)
 
     let computeCommandEncoder = commandBuffer?.makeComputeCommandEncoder()
     computeCommandEncoder?.setComputePipelineState(computePipeline)
     computeCommandEncoder?.setBuffer(cameraBuffer, offset: 0, index: 0)
-    // computeCommandEncoder?.setBuffer(trianglesBuffer, offset: 0, index: 1)
-    computeCommandEncoder?.setBuffer(pixelsBuffer, offset: 0, index: 1)
-    computeCommandEncoder?.setAccelerationStructure(accelerationStructure, bufferIndex: 2)  // Add this
+    computeCommandEncoder?.setBuffer(materialsBuffer, offset: 0, index: 1)
+    computeCommandEncoder?.setBuffer(boxLightsBuffer, offset: 0, index: 2)
+    computeCommandEncoder?.setBuffer(vertexBuffer, offset: 0, index: 3)
+    computeCommandEncoder?.setBuffer(pixelsBuffer, offset: 0, index: 4)
+    computeCommandEncoder?.setAccelerationStructure(accelerationStructure, bufferIndex: 5)
 
     // sort out threads, can yoyu just do 32*32 even if it doesnt divide evenly?
     let width = Int(camerasGPU[0].resolution.x)

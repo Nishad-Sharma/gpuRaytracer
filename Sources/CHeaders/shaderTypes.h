@@ -13,7 +13,8 @@
 typedef struct {
     simd_float4 diffuse; 
     float metallic;     
-    float roughness;      
+    float roughness;  
+    simd_float3 emissive;    
 } MaterialGPU;
 
 typedef struct {
@@ -42,6 +43,15 @@ typedef struct {
     simd_float3 emittedRadiance;
     float radius;
 } SphereLightGPU;
+
+typedef struct {
+    simd_float3 center;
+    simd_float4 color;
+    simd_float3 emittedRadiance;
+    float width;
+    float height;
+    float depth;
+} BoxLightGPU;
 
 typedef struct {
     simd_float3 origin;

@@ -10,44 +10,352 @@ import Metal
 import simd
 import MetalKit
 
-let direction = simd_normalize(simd_float3(0, 0, 0) - simd_float3(5, 0, 0))
-let camera = Camera(position: simd_float3(5, 0, 0), direction: direction,
-    resolution: simd_int2(400, 300), horizontalFov: Float.pi / 4.0)
+let startTime = DispatchTime.now()
 
-let triangle = Triangle(
-    vertices: [
-        simd_float3(0, -1, -1), // bottom left
-        simd_float3(0,  1, -1), // top left
-        simd_float3(0,  0,  1)  // right
-    ],  
-    material: Material(diffuse: simd_float4(1, 0, 0, 1), metallic: 0.0, roughness: 0.5)
+// Replace your cube setup with Cornell Box
+let cornellBoxTriangles = createCornellBoxScene()
+
+// Position camera to look into the room from the front
+let direction = simd_normalize(simd_float3(0, 0, -2.5) - simd_float3(0, 0, 9))
+let camera = Camera(position: simd_float3(0, 0, 9), direction: direction,
+    resolution: simd_int2(800, 600), horizontalFov: Float.pi / 4.0)
+
+let roomSize: Float = 5.0
+let half = roomSize / 2.0
+
+var boxLight = BoxLight(
+    center: simd_float3(0, half - 0.05, 0), // Slightly below ceiling
+    material: Material(
+        diffuse: simd_float4(1.0, 1.0, 1.0, 1.0),
+        metallic: 0.0,
+        roughness: 0.0,
+        emissive: simd_float3(20, 20, 20) // Will be calculated from LightType
+    ),
+    LightType: .bulb(efficacy: 120, watts: 200),
+    width: 1.5,
+    height: 0.1,
+    depth: 1.5
 )
+
+// boxLight.material.emissive = boxLight.emittedRadiance // Use calculated radiance
 
 let width = Int(camera.resolution.x)
 let height = Int(camera.resolution.y)
 let pixelCount = width * height
-// Pre-allocate pixels array with black transparent pixels
 var pixels = [UInt8](repeating: 0, count: pixelCount * 4)
 
-// Create a Metal device
 let device = MTLCreateSystemDefaultDevice()!
-// Check if ray tracing is supported
 guard device.supportsRaytracing else {
     print("Ray tracing not supported on this device")
     exit(1)
 }
-// make accel structures
-let accelerationStructures = setupAccelerationStructures(device: device, triangles: [triangle])
-// dont need render pipeline since we aren't rendering to screen - send to compute pipe
-pixels = drawTriangle(device: device, cameras: [camera], pixels: pixels, accelerationStructure: accelerationStructures)
 
-savePixelArrayToImage(pixels: pixels, width: width, height: height, fileName: "triangle.png")
+let accelerationStructure = setupAccelerationStructures(device: device, triangles: cornellBoxTriangles)
+// dont need render pipeline since we aren't rendering to screen - send to compute pipe
+pixels = drawTriangle(device: device, cameras: [camera], triangles: cornellBoxTriangles, boxLights: [boxLight], pixels: pixels, accelerationStructure: accelerationStructure)
+
+savePixelArrayToImage(pixels: pixels, width: width, height: height, fileName: "cornell.png")
+let endTime = DispatchTime.now()
+let nanoTime = endTime.uptimeNanoseconds - startTime.uptimeNanoseconds
+let timeInterval = Double(nanoTime) / 1_000_000_000 // Convert to seconds
+
+print("Render completed in \(String(format: "%.2f", timeInterval)) seconds")
+
+func createCornellBoxScene() -> [Triangle] {
+    var triangles: [Triangle] = []
+    
+    // Cornell Box dimensions
+    let roomSize: Float = 5.0
+    let half = roomSize / 2.0
+    
+    // Materials for Cornell Box
+    let redMaterial = Material(diffuse: simd_float4(0.75, 0.25, 0.25, 1), metallic: 0.0, roughness: 0.9)    // Left wall
+    let greenMaterial = Material(diffuse: simd_float4(0.25, 0.75, 0.25, 1), metallic: 0.0, roughness: 0.9)  // Right wall
+    let whiteMaterial = Material(diffuse: simd_float4(0.8, 0.8, 0.8, 1), metallic: 0.0, roughness: 0.9)  // Other walls
+    let blueMaterial = Material(diffuse: simd_float4(0.25, 0.25, 0.75, 1), metallic: 0.0, roughness: 0.7)   // Tall box
+    let yellowMaterial = Material(diffuse: simd_float4(0.75, 0.75, 0.25, 1), metallic: 0.0, roughness: 0.7) // Short cube
+    
+    // Back wall (z = -half) - facing INTO room (positive Z direction)
+    triangles.append(Triangle(vertices: [
+        simd_float3(-half, -half, -half), // bottom-left
+        simd_float3(-half, half, -half),  // top-left
+        simd_float3(half, half, -half)    // top-right
+    ], material: whiteMaterial))
+    triangles.append(Triangle(vertices: [
+        simd_float3(-half, -half, -half), // bottom-left
+        simd_float3(half, half, -half),   // top-right
+        simd_float3(half, -half, -half)   // bottom-right
+    ], material: whiteMaterial))
+    
+    // Left wall (x = -half) - RED - facing INTO room (positive X direction)
+    triangles.append(Triangle(vertices: [
+        simd_float3(-half, -half, -half), // back-bottom
+        simd_float3(-half, -half, half),  // front-bottom
+        simd_float3(-half, half, half)    // front-top
+    ], material: redMaterial))
+    triangles.append(Triangle(vertices: [
+        simd_float3(-half, -half, -half), // back-bottom
+        simd_float3(-half, half, half),   // front-top
+        simd_float3(-half, half, -half)   // back-top
+    ], material: redMaterial))
+    
+    // Right wall (x = +half) - GREEN - facing INTO room (negative X direction)
+    triangles.append(Triangle(vertices: [
+        simd_float3(half, -half, -half),  // back-bottom
+        simd_float3(half, half, -half),   // back-top
+        simd_float3(half, half, half)     // front-top
+    ], material: greenMaterial))
+    triangles.append(Triangle(vertices: [
+        simd_float3(half, -half, -half),  // back-bottom
+        simd_float3(half, half, half),    // front-top
+        simd_float3(half, -half, half)    // front-bottom
+    ], material: greenMaterial))
+    
+    // Floor (y = -half) - facing UP into room (positive Y direction)
+    triangles.append(Triangle(vertices: [
+        simd_float3(-half, -half, -half), // back-left
+        simd_float3(half, -half, -half),  // back-right
+        simd_float3(half, -half, half)    // front-right
+    ], material: whiteMaterial))
+    triangles.append(Triangle(vertices: [
+        simd_float3(-half, -half, -half), // back-left
+        simd_float3(half, -half, half),   // front-right
+        simd_float3(-half, -half, half)   // front-left
+    ], material: whiteMaterial))
+    
+    // Ceiling (y = +half) - facing DOWN into room (negative Y direction)
+    triangles.append(Triangle(vertices: [
+        simd_float3(-half, half, -half),  // back-left
+        simd_float3(-half, half, half),   // front-left
+        simd_float3(half, half, half)     // front-right
+    ], material: whiteMaterial))
+    triangles.append(Triangle(vertices: [
+        simd_float3(-half, half, -half),  // back-left
+        simd_float3(half, half, half),    // front-right
+        simd_float3(half, half, -half)    // back-right
+    ], material: whiteMaterial))
+    
+    // back rectanglular prism
+    let tallBoxWidth: Float = 1.5
+    let tallBoxHeight: Float = 3.5
+    let tallBoxDepth: Float = 1.5
+    let tallBoxPosition = simd_float3(-1, -half + tallBoxHeight/2, -1.5) // Back left
+    let tallBoxRotationY: Float = Float.pi / 2.4 
+    
+    let tallBoxVertices = createRotatedBoxVertices(
+        center: tallBoxPosition,
+        width: tallBoxWidth,
+        height: tallBoxHeight,
+        depth: tallBoxDepth,
+        rotationY: tallBoxRotationY
+    )
+    
+    triangles.append(contentsOf: createBoxTriangles(vertices: tallBoxVertices, material: blueMaterial))
+    
+    // front cube
+    let shortBoxSize: Float = 1.5
+    let shortBoxHeight: Float = 1.5
+    let shortBoxPosition = simd_float3(0.7, -half + shortBoxHeight/2, 1.2) // Front right
+    let shortBoxRotationY: Float = -Float.pi / 2.5 
+    
+    let shortBoxVertices = createRotatedBoxVertices(
+        center: shortBoxPosition,
+        width: shortBoxSize,
+        height: shortBoxHeight,
+        depth: shortBoxSize,
+        rotationY: shortBoxRotationY
+    )
+    
+    triangles.append(contentsOf: createBoxTriangles(vertices: shortBoxVertices, material: yellowMaterial))
+
+    // Create BoxLight for the ceiling
+    var ceilingLight = BoxLight(
+        center: simd_float3(0, half - 0.05, 0), // Slightly below ceiling
+        material: Material(
+            diffuse: simd_float4(1.0, 1.0, 1.0, 1.0),
+            metallic: 0.0,
+            roughness: 0.0,
+            emissive: simd_float3(20, 20, 20) // Will be calculated from LightType
+        ),
+        LightType: .bulb(efficacy: 120, watts: 200),
+        width: 1.5,
+        height: 0.1,
+        depth: 1.5
+    )
+    // ceilingLight.material.emissive = ceilingLight.emittedRadiance // Use calculated radiance
+    
+    // because material emmisive set poorly
+    let lightMaterial = Material(
+        diffuse: ceilingLight.material.diffuse,
+        metallic: ceilingLight.material.metallic,
+        roughness: ceilingLight.material.roughness,
+        emissive: ceilingLight.material.emissive // Use calculated radiance - poorly done atm fix later
+    )
+
+    let lightBoxVertices = createRotatedBoxVertices(
+        center: ceilingLight.center,
+        width: ceilingLight.width,
+        height: ceilingLight.height,
+        depth: ceilingLight.depth,
+        rotationY: 0
+    )
+
+    triangles.append(contentsOf: createBoxTriangles(vertices: lightBoxVertices, material: lightMaterial))
+
+    return triangles
+}
+
+func createRotatedBoxVertices(center: simd_float3, width: Float, height: Float, depth: Float, rotationY: Float) -> [simd_float3] {
+    let halfW = width / 2
+    let halfH = height / 2
+    let halfD = depth / 2
+    
+    // Create box vertices centered at origin
+    let baseVertices = [
+        simd_float3(-halfW, -halfH, -halfD), // 0
+        simd_float3( halfW, -halfH, -halfD), // 1
+        simd_float3( halfW,  halfH, -halfD), // 2
+        simd_float3(-halfW,  halfH, -halfD), // 3
+        simd_float3(-halfW, -halfH,  halfD), // 4
+        simd_float3( halfW, -halfH,  halfD), // 5
+        simd_float3( halfW,  halfH,  halfD), // 6
+        simd_float3(-halfW,  halfH,  halfD), // 7
+    ]
+    
+    // Rotation matrix around Y-axis
+    let cosY = cos(rotationY)
+    let sinY = sin(rotationY)
+    let rotationMatrix = simd_float4x4(
+        simd_float4(cosY, 0, sinY, 0),
+        simd_float4(0, 1, 0, 0),
+        simd_float4(-sinY, 0, cosY, 0),
+        simd_float4(0, 0, 0, 1)
+    )
+    
+    // Apply rotation and translation
+    return baseVertices.map { vertex in
+        let homogeneous = simd_float4(vertex.x, vertex.y, vertex.z, 1.0)
+        let rotated = rotationMatrix * homogeneous
+        return simd_float3(rotated.x + center.x, rotated.y + center.y, rotated.z + center.z)
+    }
+}
+
+func createBoxTriangles(vertices: [simd_float3], material: Material) -> [Triangle] {
+    var triangles: [Triangle] = []
+        
+    // Back face (z = min) - facing away from viewer
+    triangles.append(Triangle(vertices: [vertices[0], vertices[2], vertices[1]], material: material))
+    triangles.append(Triangle(vertices: [vertices[0], vertices[3], vertices[2]], material: material))
+    
+    // Front face (z = max) - facing toward viewer
+    triangles.append(Triangle(vertices: [vertices[4], vertices[5], vertices[6]], material: material))
+    triangles.append(Triangle(vertices: [vertices[4], vertices[6], vertices[7]], material: material))
+    
+    // Left face (x = min) - facing right
+    triangles.append(Triangle(vertices: [vertices[0], vertices[4], vertices[7]], material: material))
+    triangles.append(Triangle(vertices: [vertices[0], vertices[7], vertices[3]], material: material))
+    
+    // Right face (x = max) - facing left
+    triangles.append(Triangle(vertices: [vertices[1], vertices[2], vertices[6]], material: material))
+    triangles.append(Triangle(vertices: [vertices[1], vertices[6], vertices[5]], material: material))
+    
+    // Bottom face (y = min) - facing up
+    triangles.append(Triangle(vertices: [vertices[0], vertices[1], vertices[5]], material: material))
+    triangles.append(Triangle(vertices: [vertices[0], vertices[5], vertices[4]], material: material))
+    
+    // Top face (y = max) - facing down
+    triangles.append(Triangle(vertices: [vertices[3], vertices[7], vertices[6]], material: material))
+    triangles.append(Triangle(vertices: [vertices[3], vertices[6], vertices[2]], material: material))
+    
+    return triangles
+}
+
+
+// let direction = simd_normalize(simd_float3(0, 0, 0) - simd_float3(5, 0, 0))
+// let camera = Camera(position: simd_float3(5, 0, 0), direction: direction,
+//     resolution: simd_int2(400, 300), horizontalFov: Float.pi / 4.0)
+
+// let direction = simd_normalize(simd_float3(0, 0, 0) - simd_float3(5, 3, 5))
+// let camera = Camera(position: simd_float3(5, 3, 5), direction: direction,
+//     resolution: simd_int2(400, 300), horizontalFov: Float.pi / 4.0)
+
+// // cube setup
+// let cubeSize: Float = 1
+// let mat = Material(diffuse: simd_float4(1, 0, 0, 1), metallic: 0.0, roughness: 0.5)
+// let vertices = [
+//     simd_float3(-cubeSize, -cubeSize, -cubeSize), // 0: left  bottom back
+//     simd_float3( cubeSize, -cubeSize, -cubeSize), // 1: right bottom back
+//     simd_float3( cubeSize,  cubeSize, -cubeSize), // 2: right top    back
+//     simd_float3(-cubeSize,  cubeSize, -cubeSize), // 3: left  top    back
+//     simd_float3(-cubeSize, -cubeSize,  cubeSize), // 4: left  bottom front
+//     simd_float3( cubeSize, -cubeSize,  cubeSize), // 5: right bottom front
+//     simd_float3( cubeSize,  cubeSize,  cubeSize), // 6: right top    front
+//     simd_float3(-cubeSize,  cubeSize,  cubeSize), // 7: left  top    front
+// ]
+
+
+// //setup triangles for cube
+// var triangles: [Triangle] = []
+// // Back face (z = -half)
+// triangles.append(Triangle(vertices: [vertices[0], vertices[1], vertices[2]], material: mat))
+// triangles.append(Triangle(vertices: [vertices[0], vertices[2], vertices[3]], material: mat))
+
+// // Front face (z = +half)
+// triangles.append(Triangle(vertices: [vertices[4], vertices[6], vertices[5]], material: mat))
+// triangles.append(Triangle(vertices: [vertices[4], vertices[7], vertices[6]], material: mat))
+
+// // Left face (x = -half)
+// triangles.append(Triangle(vertices: [vertices[0], vertices[3], vertices[7]], material: mat))
+// triangles.append(Triangle(vertices: [vertices[0], vertices[7], vertices[4]], material: mat))
+
+// // Right face (x = +half)
+// triangles.append(Triangle(vertices: [vertices[1], vertices[5], vertices[6]], material: mat))
+// triangles.append(Triangle(vertices: [vertices[1], vertices[6], vertices[2]], material: mat))
+
+// // Bottom face (y = -half)
+// triangles.append(Triangle(vertices: [vertices[0], vertices[4], vertices[5]], material: mat))
+// triangles.append(Triangle(vertices: [vertices[0], vertices[5], vertices[1]], material: mat))
+
+// // Top face (y = +half)
+// triangles.append(Triangle(vertices: [vertices[3], vertices[2], vertices[6]], material: mat))
+// triangles.append(Triangle(vertices: [vertices[3], vertices[6], vertices[7]], material: mat))
+
+// // let triangle = Triangle(
+// //     vertices: [
+// //         simd_float3(0, -1, -1), // bottom left
+// //         simd_float3(0,  1, -1), // top left
+// //         simd_float3(0,  0,  1)  // right
+// //     ],  
+// //     material: Material(diffuse: simd_float4(1, 0, 0, 1), metallic: 0.0, roughness: 0.5)
+// // )
+
+// let width = Int(camera.resolution.x)
+// let height = Int(camera.resolution.y)
+// let pixelCount = width * height
+// // Pre-allocate pixels array with black transparent pixels
+// var pixels = [UInt8](repeating: 0, count: pixelCount * 4)
+
+// // Create a Metal device
+// let device = MTLCreateSystemDefaultDevice()!
+// // Check if ray tracing is supported
+// guard device.supportsRaytracing else {
+//     print("Ray tracing not supported on this device")
+//     exit(1)
+// }
+// // make accel structures
+// let accelerationStructures   = setupAccelerationStructures(device: device, triangles: triangles)
+// // dont need render pipeline since we aren't rendering to screen - send to compute pipe
+// pixels = drawTriangle(device: device, cameras: [camera], pixels: pixels, accelerationStructure: accelerationStructures)
+
+// savePixelArrayToImage(pixels: pixels, width: width, height: height, fileName: "triangle.png")
+
+
+
 
 struct Triangle {
     var vertices: [simd_float3]
     var material: Material
 }
-
 
 //setup scene
 func rayTraceScene() {
@@ -62,8 +370,8 @@ func rayTraceScene() {
         LightType: .bulb(efficacy: 15, watts: 60), radius: 0.1)
     // let lightBulb = SphereLight(center: simd_float3(3, 3, 3), color: simd_float4(1, 0.8, 0.4, 1),  // warmer light
         // LightType: .bulb(efficacy: 15, watts: 60), radius: 0.1)
-    var lights = [lightBulb]
-    var ambientLight = simd_float4(0.53, 0.81, 0.92, 1) 
+    let lights = [lightBulb]
+    let ambientLight = simd_float4(0.53, 0.81, 0.92, 1) 
 
     var spheres: [Sphere] = []
     let sphere1 = Sphere(center: simd_float3(4, 2, 0), 
@@ -105,6 +413,37 @@ func render(cameras: [Camera] = [], spheres: [Sphere] = [], lights: [SphereLight
     print("Render completed in \(String(format: "%.2f", timeInterval)) seconds")
 }
 
+struct BoxLight {
+    var center: simd_float3
+    var material: Material
+    var LightType: LightType
+    var width: Float
+    var height: Float
+    var depth: Float
+
+    // Convert to radiance for outgoing rays
+    var emittedRadiance: simd_float3 {
+        switch LightType {
+        case .bulb(let efficacy, let watts):
+            let luminousFlux = efficacy * watts // lm
+            let radiantFlux = luminousFlux / 683.0 // Convert lumens to watts (assuming 555 nm peak sensitivity)
+            return calculateRadiance(radiantFlux: radiantFlux)
+        case .radiometic(let radiantFlux):
+            return calculateRadiance(radiantFlux: radiantFlux)
+        }
+    }
+
+    func calculateRadiance(radiantFlux: Float) -> simd_float3 {
+        let surfaceArea = 2.0 * (width * height + width * depth + height * depth) // m²
+        let radiantExitance = radiantFlux / surfaceArea // W/m²
+        
+        // For Lambertian emitter: radiance = exitance / π
+        let radiance = radiantExitance / Float.pi // W/(sr·m²)
+        
+        return simd_float3(material.diffuse.x, material.diffuse.y, material.diffuse.z) * radiance
+    }
+}
+
 enum LightType {
     case bulb(efficacy: Float, watts: Float)
     case radiometic(radiantFlux: Float) 
@@ -143,6 +482,7 @@ struct Material {
     var diffuse: simd_float4
     var metallic: Float
     var roughness: Float
+    var emissive: simd_float3 = simd_float3(0, 0, 0)
 }
 
 struct Sphere {
@@ -157,7 +497,7 @@ struct Camera {
     var up: simd_float3 = simd_float3(0, 1, 0) // assuming camera's up vector is positive y-axis
     var resolution: simd_int2
     var horizontalFov: Float // field of view in radians
-    var ev100: Float = 0.5 // lower ev100 makes light brighter, doesnt seem to impact rest of scene
+    var ev100: Float = -1.0 // lower ev100 makes light brighter, doesnt seem to impact rest of scene
     
     // func exposure() -> Float {
     //     return 1.0 / pow(2.0, ev100 * 1.2)
