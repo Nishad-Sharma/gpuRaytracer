@@ -162,8 +162,8 @@ accelerationStructure : MTLAccelerationStructure) -> [UInt8] {
     let gridSize = MTLSize(width: width, height: height, depth: 1)
 
     // let threadsPerThreadGroup = MTLSize(width: 32, height: 32, depth: 1)
-    let threadsPerThreadGroup = MTLSize(width: 16, height: 16, depth: 1)
-    // let threadsPerThreadGroup = MTLSize(width: 8, height: 8, depth: 1)
+    // let threadsPerThreadGroup = MTLSize(width: 16, height: 16, depth: 1)
+    let threadsPerThreadGroup = MTLSize(width: 8, height: 8, depth: 1)
 
     computeCommandEncoder?.dispatchThreads(gridSize, threadsPerThreadgroup: threadsPerThreadGroup)
     computeCommandEncoder?.endEncoding()

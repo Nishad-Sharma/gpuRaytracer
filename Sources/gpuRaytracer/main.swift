@@ -26,7 +26,7 @@ let half = roomSize / 2.0
 var boxLight = BoxLight(
     center: simd_float3(0, half - 0.05, 0), // Slightly below ceiling
     material: Material(
-        diffuse: simd_float4(1.0, 1.0, 1.0, 1.0),
+        diffuse: simd_float4(1.0, 0.95, 0.9, 1.0),
         metallic: 0.0,
         roughness: 0.0,
         emissive: simd_float3(20, 20, 20) // Will be calculated from LightType
@@ -69,76 +69,78 @@ func createCornellBoxScene() -> [Triangle] {
     let half = roomSize / 2.0
     
     // Materials for Cornell Box
-    let redMaterial = Material(diffuse: simd_float4(0.75, 0.25, 0.25, 1), metallic: 0.0, roughness: 0.9)    // Left wall
-    let greenMaterial = Material(diffuse: simd_float4(0.25, 0.75, 0.25, 1), metallic: 0.0, roughness: 0.9)  // Right wall
-    let whiteMaterial = Material(diffuse: simd_float4(0.8, 0.8, 0.8, 1), metallic: 0.0, roughness: 0.9)  // Other walls
-    let blueMaterial = Material(diffuse: simd_float4(0.25, 0.25, 0.75, 1), metallic: 0.0, roughness: 0.7)   // Tall box
-    let yellowMaterial = Material(diffuse: simd_float4(0.75, 0.75, 0.25, 1), metallic: 0.0, roughness: 0.7) // Short cube
+    let redMaterial = Material(diffuse: simd_float4(0.9, 0.0, 0.0, 1), metallic: 0.3, roughness: 0.6)    // Left wall
+    let greenMaterial = Material(diffuse: simd_float4(0.0, 0.7, 0.0, 1), metallic: 0.3, roughness: 0.6)  // Right wall
+    let whiteMaterial = Material(diffuse: simd_float4(0.9, 0.9, 0.9, 1), metallic: 0.3, roughness: 0.6)  // Other walls
+    let diffuseBoxMaterial = Material(diffuse: simd_float4(0.9, 0.9, 0.9, 1), metallic: 0.1, roughness: 0.8)  
+    let specularBoxMaterial = Material(diffuse: simd_float4(0.9, 0.9, 0.9, 1), metallic: 0.9, roughness: 0.1)  
+    // let blueMaterial = Material(diffuse: simd_float4(0.25, 0.25, 0.75, 1), metallic: 0.3, roughness: 0.6)   // Tall box
+    // let yellowMaterial = Material(diffuse: simd_float4(0.75, 0.75, 0.25, 1), metallic: 0.3, roughness: 0.6) // Short cube
     
     // Back wall (z = -half) - facing INTO room (positive Z direction)
     triangles.append(Triangle(vertices: [
         simd_float3(-half, -half, -half), // bottom-left
-        simd_float3(-half, half, -half),  // top-left
-        simd_float3(half, half, -half)    // top-right
+        simd_float3(half, half, -half),    // top-right
+        simd_float3(-half, half, -half)  // top-left
     ], material: whiteMaterial))
     triangles.append(Triangle(vertices: [
         simd_float3(-half, -half, -half), // bottom-left
-        simd_float3(half, half, -half),   // top-right
-        simd_float3(half, -half, -half)   // bottom-right
+        simd_float3(half, -half, -half),   // bottom-right
+        simd_float3(half, half, -half)   // top-right
     ], material: whiteMaterial))
     
     // Left wall (x = -half) - RED - facing INTO room (positive X direction)
     triangles.append(Triangle(vertices: [
         simd_float3(-half, -half, -half), // back-bottom
-        simd_float3(-half, -half, half),  // front-bottom
-        simd_float3(-half, half, half)    // front-top
+        simd_float3(-half, half, half),    // front-top
+        simd_float3(-half, -half, half)  // front-bottom
     ], material: redMaterial))
     triangles.append(Triangle(vertices: [
         simd_float3(-half, -half, -half), // back-bottom
-        simd_float3(-half, half, half),   // front-top
-        simd_float3(-half, half, -half)   // back-top
+        simd_float3(-half, half, -half),   // back-top
+        simd_float3(-half, half, half)   // front-top
     ], material: redMaterial))
     
     // Right wall (x = +half) - GREEN - facing INTO room (negative X direction)
     triangles.append(Triangle(vertices: [
         simd_float3(half, -half, -half),  // back-bottom
-        simd_float3(half, half, -half),   // back-top
-        simd_float3(half, half, half)     // front-top
+        simd_float3(half, half, half),     // front-top
+        simd_float3(half, half, -half)   // back-top
     ], material: greenMaterial))
     triangles.append(Triangle(vertices: [
         simd_float3(half, -half, -half),  // back-bottom
-        simd_float3(half, half, half),    // front-top
-        simd_float3(half, -half, half)    // front-bottom
+        simd_float3(half, -half, half),    // front-bottom
+        simd_float3(half, half, half)    // front-top
     ], material: greenMaterial))
     
     // Floor (y = -half) - facing UP into room (positive Y direction)
     triangles.append(Triangle(vertices: [
         simd_float3(-half, -half, -half), // back-left
-        simd_float3(half, -half, -half),  // back-right
-        simd_float3(half, -half, half)    // front-right
+        simd_float3(half, -half, half),    // front-right
+        simd_float3(half, -half, -half)  // back-right
     ], material: whiteMaterial))
     triangles.append(Triangle(vertices: [
         simd_float3(-half, -half, -half), // back-left
-        simd_float3(half, -half, half),   // front-right
-        simd_float3(-half, -half, half)   // front-left
+        simd_float3(-half, -half, half),   // front-left
+        simd_float3(half, -half, half)   // front-right
     ], material: whiteMaterial))
     
     // Ceiling (y = +half) - facing DOWN into room (negative Y direction)
     triangles.append(Triangle(vertices: [
         simd_float3(-half, half, -half),  // back-left
-        simd_float3(-half, half, half),   // front-left
-        simd_float3(half, half, half)     // front-right
+        simd_float3(half, half, half),     // front-right
+        simd_float3(-half, half, half)   // front-left
     ], material: whiteMaterial))
     triangles.append(Triangle(vertices: [
         simd_float3(-half, half, -half),  // back-left
-        simd_float3(half, half, half),    // front-right
-        simd_float3(half, half, -half)    // back-right
+        simd_float3(half, half, -half),    // back-right
+        simd_float3(half, half, half)    // front-right
     ], material: whiteMaterial))
-    
+  
     // back rectanglular prism
-    let tallBoxWidth: Float = 1.5
-    let tallBoxHeight: Float = 3.5
-    let tallBoxDepth: Float = 1.5
+    let tallBoxWidth: Float = 1.2
+    let tallBoxHeight: Float = 2.8
+    let tallBoxDepth: Float = 1.2
     let tallBoxPosition = simd_float3(-1, -half + tallBoxHeight/2, -1.5) // Back left
     let tallBoxRotationY: Float = Float.pi / 2.4 
     
@@ -150,11 +152,11 @@ func createCornellBoxScene() -> [Triangle] {
         rotationY: tallBoxRotationY
     )
     
-    triangles.append(contentsOf: createBoxTriangles(vertices: tallBoxVertices, material: blueMaterial))
+    triangles.append(contentsOf: createBoxTriangles(vertices: tallBoxVertices, material: diffuseBoxMaterial))
     
     // front cube
-    let shortBoxSize: Float = 1.5
-    let shortBoxHeight: Float = 1.5
+    let shortBoxSize: Float = 1.2
+    let shortBoxHeight: Float = 1.2
     let shortBoxPosition = simd_float3(0.7, -half + shortBoxHeight/2, 1.2) // Front right
     let shortBoxRotationY: Float = -Float.pi / 2.5 
     
@@ -166,10 +168,10 @@ func createCornellBoxScene() -> [Triangle] {
         rotationY: shortBoxRotationY
     )
     
-    triangles.append(contentsOf: createBoxTriangles(vertices: shortBoxVertices, material: yellowMaterial))
+    triangles.append(contentsOf: createBoxTriangles(vertices: shortBoxVertices, material: specularBoxMaterial))
 
     // Create BoxLight for the ceiling
-    var ceilingLight = BoxLight(
+    let ceilingLight = BoxLight(
         center: simd_float3(0, half - 0.05, 0), // Slightly below ceiling
         material: Material(
             diffuse: simd_float4(1.0, 1.0, 1.0, 1.0),
@@ -242,30 +244,30 @@ func createRotatedBoxVertices(center: simd_float3, width: Float, height: Float, 
 
 func createBoxTriangles(vertices: [simd_float3], material: Material) -> [Triangle] {
     var triangles: [Triangle] = []
-        
-    // Back face (z = min) - facing away from viewer
+    
+    // Back face 
     triangles.append(Triangle(vertices: [vertices[0], vertices[2], vertices[1]], material: material))
     triangles.append(Triangle(vertices: [vertices[0], vertices[3], vertices[2]], material: material))
     
-    // Front face (z = max) - facing toward viewer
+    // Front face 
     triangles.append(Triangle(vertices: [vertices[4], vertices[5], vertices[6]], material: material))
     triangles.append(Triangle(vertices: [vertices[4], vertices[6], vertices[7]], material: material))
     
-    // Left face (x = min) - facing right
+    // Left face 
     triangles.append(Triangle(vertices: [vertices[0], vertices[4], vertices[7]], material: material))
     triangles.append(Triangle(vertices: [vertices[0], vertices[7], vertices[3]], material: material))
     
-    // Right face (x = max) - facing left
-    triangles.append(Triangle(vertices: [vertices[1], vertices[2], vertices[6]], material: material))
+    // Right face 
     triangles.append(Triangle(vertices: [vertices[1], vertices[6], vertices[5]], material: material))
+    triangles.append(Triangle(vertices: [vertices[1], vertices[2], vertices[6]], material: material))
     
-    // Bottom face (y = min) - facing up
+    // Bottom face 
+    triangles.append(Triangle(vertices: [vertices[0], vertices[5], vertices[4]], material: material)) 
     triangles.append(Triangle(vertices: [vertices[0], vertices[1], vertices[5]], material: material))
-    triangles.append(Triangle(vertices: [vertices[0], vertices[5], vertices[4]], material: material))
     
-    // Top face (y = max) - facing down
+    // Top face 
+    triangles.append(Triangle(vertices: [vertices[3], vertices[6], vertices[2]], material: material)) 
     triangles.append(Triangle(vertices: [vertices[3], vertices[7], vertices[6]], material: material))
-    triangles.append(Triangle(vertices: [vertices[3], vertices[6], vertices[2]], material: material))
     
     return triangles
 }
