@@ -30,6 +30,17 @@ func convertTriangle(triangles: [Triangle]) -> [TriangleGPU] {
     }
 }
 
+func convertSquareLight(squareLight: SquareLight) -> SquareLightGPU {
+    return SquareLightGPU(
+        center: squareLight.center,
+        color: squareLight.material.diffuse,
+        emittedRadiance: squareLight.emittedRadiance,
+        width: squareLight.width,
+        depth: squareLight.depth
+    )
+    
+}
+
 func convertBoxLight(boxLight: BoxLight) -> BoxLightGPU {
     return BoxLightGPU(
         center: boxLight.center,
@@ -64,7 +75,7 @@ func setupAccelerationStructures(device: MTLDevice, triangles: [Triangle]) -> MT
     geometryDescriptor.vertexBuffer = vertexBuffer
     geometryDescriptor.vertexBufferOffset = 0
     geometryDescriptor.vertexStride = MemoryLayout<simd_float3>.stride
-    geometryDescriptor.triangleCount = triangles.count // = 12 right now
+    geometryDescriptor.triangleCount = triangles.count 
 
     // primitive acceleration structure descriptor, tells gpu which geometry prims (triangles),
     // how geometry is in memory which will be used to make the acceleration structure
@@ -97,12 +108,12 @@ func setupAccelerationStructures(device: MTLDevice, triangles: [Triangle]) -> MT
     return accelerationStructure
 }
 
-func drawTriangle(device: MTLDevice, cameras: [Camera], triangles: [Triangle], boxLights: [BoxLight], pixels: [UInt8], 
+func drawTriangle(device: MTLDevice, cameras: [Camera], triangles: [Triangle], squareLights: [SquareLight], pixels: [UInt8], 
 accelerationStructure : MTLAccelerationStructure) -> [UInt8] {
     let camerasGPU = convertCameras(cameras: cameras)
     // let trianglesGPU = convertTriangle(triangles: triangles)
     let materialsGPU = triangles.map { convertMaterial(material: $0.material) }
-    let boxLightsGPU = [convertBoxLight(boxLight: boxLights[0])]
+    let squareLightsGPU = [convertSquareLight(squareLight: squareLights[0])]
     // triangle verts needed for normal calc - cant pull from accel structure
     var allVertices: [simd_float3] = []
     for triangle in triangles {
@@ -142,8 +153,8 @@ accelerationStructure : MTLAccelerationStructure) -> [UInt8] {
     length: materialsGPU.count * MemoryLayout<MaterialGPU>.size, options: .storageModeShared)
     let pixelsBuffer = device.makeBuffer(length: pixels.count * MemoryLayout<UInt8>.size, 
     options: .storageModeShared)
-    let boxLightsBuffer = device.makeBuffer(bytes: boxLightsGPU,
-    length: boxLightsGPU.count * MemoryLayout<BoxLightGPU>.size, options: .storageModeShared)
+    let squareLightsBuffer = device.makeBuffer(bytes: squareLightsGPU,
+    length: squareLightsGPU.count * MemoryLayout<SquareLightGPU>.size, options: .storageModeShared)
     let vertexBuffer = device.makeBuffer(bytes: allVertices,
     length: allVertices.count * MemoryLayout<simd_float3>.size, options: .storageModeShared)
 
@@ -151,7 +162,7 @@ accelerationStructure : MTLAccelerationStructure) -> [UInt8] {
     computeCommandEncoder?.setComputePipelineState(computePipeline)
     computeCommandEncoder?.setBuffer(cameraBuffer, offset: 0, index: 0)
     computeCommandEncoder?.setBuffer(materialsBuffer, offset: 0, index: 1)
-    computeCommandEncoder?.setBuffer(boxLightsBuffer, offset: 0, index: 2)
+    computeCommandEncoder?.setBuffer(squareLightsBuffer, offset: 0, index: 2)
     computeCommandEncoder?.setBuffer(vertexBuffer, offset: 0, index: 3)
     computeCommandEncoder?.setBuffer(pixelsBuffer, offset: 0, index: 4)
     computeCommandEncoder?.setAccelerationStructure(accelerationStructure, bufferIndex: 5)

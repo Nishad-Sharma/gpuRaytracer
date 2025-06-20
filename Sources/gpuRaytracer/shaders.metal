@@ -46,7 +46,7 @@ float3 traceTriangleLightRay(float3 origin, float3 direction,
             return material.emissive; // Hit a light triangle
         }
     }
-    
+    // TODO: fix return type??
     return float3(-1.0, -1.0, -1.0); // Miss or hit non-emissive surface
 }
 
@@ -200,6 +200,7 @@ device const SphereLightGPU* lights, uint lightCount) {
     return closestIntersection;
 }
 
+// TODO
 float cameraExposure(CameraGPU camera) {
     return 1.0 / pow(2.0, camera.ev100 * 1.2);
     // return 1.0 / (78.0 * pow(2.0, camera.ev100));
@@ -236,6 +237,59 @@ uint nextPowerOfTwo(uint n) {
     n |= n >> 16;
     n++;
     return n;
+}
+
+SampleResultGPU sampleSquareLight(SquareLightGPU light, float3 point, uint2 index, uint sampleIndex, uint samples, uint i) {
+    // Build orthonormal basis for the rectangle's plane
+    // float3 normal = light.normal; // hard code for now?
+    float3 normal = float3(0, -1, 0); // TODO: hard code for now?
+    OrthonormalBasisGPU basis = buildOrthonormalBasis(normal);
+
+    // Rectangle corners in local space
+    float3 center = light.center;
+    // float halfW = light.width * 0.5;
+    // float halfH = light.depth * 0.5;
+
+    // Use Hammersley sequence for stratified sampling
+    uint pow2 = nextPowerOfTwo(samples);
+    float2 u = hammersley2D(i, pow2);
+
+    // Uniformly sample a point on the rectangle
+    float x = (u.x - 0.5) * light.width;
+    float y = (u.y - 0.5) * light.depth;
+    float3 samplePos = center + basis.tangent * x + basis.bitangent * y;
+
+    // Direction from shading point to light sample
+    float3 toLight = samplePos - point;
+    float distance = length(toLight);
+    float3 lightDir = toLight / distance;
+
+    // PDF for area light: (distance^2) / (area * cosTheta)
+    float area = light.width * light.depth;
+    float cosTheta = max(0.0, dot(-lightDir, normal));
+    float pdf = (distance * distance) / (area * cosTheta + 1e-6);
+
+    SampleResultGPU result;
+    result.direction = lightDir;
+    result.pdf = pdf;
+    result.radiance = light.emittedRadiance;
+    return result;
+}
+
+float calculateSquareLightPdf(SquareLightGPU light, float3 point, float3 direction) {
+    // Calculate the distance from the point to the light center
+    float3 lightNormal = float3(0, -1, 0); // TODO: either store or gen normal properly
+    float3 toLight = light.center - point;
+    float distanceToLight = length(toLight);
+    
+    // Calculate the cosine of the angle between the direction and the light normal
+    float cosTheta = max(0.0, dot(-direction, lightNormal));
+    
+    // Area of the square light
+    float area = light.width * light.depth;
+    
+    // PDF for area light: (distance^2) / (area * cosTheta)
+    return (distanceToLight * distanceToLight) / (area * cosTheta + 1e-6);
 }
 
 // doesnt sample visible faces only but apparently this is fine since we do shadow ray test later
@@ -378,6 +432,7 @@ SampleResultGPU sampleSphereLight(SphereLightGPU light, float3 point, uint2 inde
 
     OrthonormalBasisGPU basis = buildOrthonormalBasis(lightDir);
 
+    // TODO: find which is right??
     // float3 sampleDir = normalize(
     //     cos(phi) * basis.tangent * sinTheta + 
     //     sin(phi) * basis.bitangent * sinTheta + 
@@ -472,6 +527,7 @@ float D_GGX(float NoH, float a) {
     return a2 / (M_PI_F * f * f);
 }
 
+// TODO: replace with just brdf
 // VNDF sampling
 SampleResultGPU sampleVNDF(float3 viewDir, float3 normal, float roughness, uint2 index, uint sampleIndex, 
 uint samples, uint i) {
@@ -684,8 +740,8 @@ float3 calculateBRDFContribution(RayGPU ray, float3 point, float3 normal, Materi
     return finalColor;
 }
 
-float3 calculateLighting(IntersectionGPU intersection, uint samples, RayGPU ray, uint2 index, BoxLightGPU light, 
-primitive_acceleration_structure accelerationStructure, device const MaterialGPU* materials) {
+float3 calculateLighting(IntersectionGPU intersection, uint samples, RayGPU ray, uint2 index, SquareLightGPU light, 
+primitive_acceleration_structure accelerationStructure, device const MaterialGPU* materials, uint maxBounces, uint remainingBounces) {
     // only one light atm
     float3 totalLight = float3(0.0, 0.0, 0.0);
     uint samplesPerStrategy = samples / 3;
@@ -695,7 +751,8 @@ primitive_acceleration_structure accelerationStructure, device const MaterialGPU
     for (uint i = 0; i < samplesPerStrategy; i++) {
         // Sample box light
         uint sampleId = (index.y * imageWidth + index.x) * (samplesPerStrategy) + i;
-        SampleResultGPU lightSample = sampleBoxLight(light, intersection.point, index, sampleId, samplesPerStrategy, i);
+        // SampleResultGPU lightSample = sampleBoxLight(light, intersection.point, index, sampleId, samplesPerStrategy, i);
+        SampleResultGPU lightSample = sampleSquareLight(light, intersection.point, index, sampleId, samplesPerStrategy, i);
 
         // Calculate PDFs for other strategies
         float cosineWeightedPdf = max(dot(intersection.normal, lightSample.direction), 0.0) / M_PI_F;
@@ -717,7 +774,8 @@ primitive_acceleration_structure accelerationStructure, device const MaterialGPU
         samplesPerStrategy, i + samplesPerStrategy); // use i+ samplesPerStrategy to avoid correlation between two strategies
         
         // Calculate PDFs for other strategies
-        float lightPdf = calculateBoxLightPdf(light, intersection.point, cosineSample.direction);
+        // float lightPdf = calculateBoxLightPdf(light, intersection.point, cosineSample.direction);
+        float lightPdf = calculateSquareLightPdf(light, intersection.point, cosineSample.direction);
         float vndfPdf = calculateVNDFPdf(-ray.direction, intersection.normal, cosineSample.direction, 
         intersection.material.roughness);
 
@@ -736,7 +794,8 @@ primitive_acceleration_structure accelerationStructure, device const MaterialGPU
         intersection.material.roughness, index, sampleId, samplesPerStrategy, i + 2 * samplesPerStrategy);
         
         // Calculate PDFs for other strategies
-        float lightPdf = calculateBoxLightPdf(light, intersection.point, vndfSample.direction);
+        // float lightPdf = calculateBoxLightPdf(light, intersection.point, vndfSample.direction);
+        float lightPdf = calculateSquareLightPdf(light, intersection.point, vndfSample.direction);
         float cosineWeightedPdf = max(dot(intersection.normal, vndfSample.direction), 0.0) / M_PI_F;
 
         float3 radiance = traceTriangleLightRay(intersection.point, vndfSample.direction, accelerationStructure, materials);
@@ -816,8 +875,8 @@ float3 traceBounceRay(ray bRay, primitive_acceleration_structure accelerationStr
     //                                             vertices, light, remainingBounces - 1);
 }
 
-float3 recursiveLightingCalculation(ray r, uint2 index, BoxLightGPU light, primitive_acceleration_structure accelerationStructure, 
-device const MaterialGPU* materials, device const float3* vertices, uint remainingBounces, uint totalBounces, uint samples) {
+// TODO: make proper recursive 
+float3 recursiveLightingCalculation(ray r, uint2 index, SquareLightGPU light, primitive_acceleration_structure accelerationStructure, device const MaterialGPU* materials, device const float3* vertices, uint remainingBounces, uint totalBounces, uint samples) {
     if (remainingBounces <= 0) {
         return float3(0.0, 0.0, 0.0); // No more bounces
     }
@@ -860,7 +919,7 @@ device const MaterialGPU* materials, device const float3* vertices, uint remaini
     MaterialGPU material = materials[intersection.primitive_id];
     // check hit light source
     if (length(material.emissive) > 0.0) {
-        return material.emissive;
+        return material.emissive * material.diffuse.rgb;
     }
 
     // now handle normal triangle hit
@@ -886,13 +945,10 @@ device const MaterialGPU* materials, device const float3* vertices, uint remaini
 
     float3 sampledLight = calculateLighting(closestIntersection, samples, gRay, index, 
     light, accelerationStructure, materials);
-    // return sampledLight;
-    // if (remainingBounces <= 1) {
-    //     return sampledLight; // No more bounces, return sampled light
-    // }
+    return sampledLight;
 
     float3 bounceLight = float3(0.0, 0.0, 0.0);
-    uint spawns = 100;
+    uint spawns = 30;
     uint spawnsPerStrategy = spawns / 3;
 
     // do mis sampling to generate new directions for 3 strategies
@@ -900,7 +956,8 @@ device const MaterialGPU* materials, device const float3* vertices, uint remaini
     // direct light case
     for (uint i = 0; i < spawnsPerStrategy; i++) {
         uint sampleId = (index.y * imageWidth + index.x) * (spawnsPerStrategy) + i;
-        SampleResultGPU lightSample = sampleBoxLight(light, closestIntersection.point, index, sampleId, spawnsPerStrategy, i);
+        // SampleResultGPU lightSample = sampleBoxLight(light, closestIntersection.point, index, sampleId, spawnsPerStrategy, i);
+        SampleResultGPU lightSample = sampleSquareLight(light, closestIntersection.point, index, sampleId, spawnsPerStrategy, i);
         float3 newDirection = lightSample.direction;
 
         ray newRay;
@@ -919,8 +976,8 @@ device const MaterialGPU* materials, device const float3* vertices, uint remaini
         material = materials[intersection.primitive_id];
 
         if (intersection.type != intersection_type::triangle) {
-            // bounceLight += float3(0.0, 0.0, 0.0); // Miss
-            continue;
+            bounceLight += float3(0.0, 0.0, 0.0); // Miss
+            // continue;
         } 
         else if (length(material.emissive) > 0.0) {
             // check hit light source
@@ -949,7 +1006,7 @@ device const MaterialGPU* materials, device const float3* vertices, uint remaini
             nextIntersection.normal = triangleNormal;
             nextIntersection.material = material;
 
-            bounceLight += calculateLighting(nextIntersection, spawns, nray, index, 
+            bounceLight += calculateLighting(nextIntersection, 100, nray, index, 
             light, accelerationStructure, materials);
         }
     }
@@ -1006,7 +1063,7 @@ device const MaterialGPU* materials, device const float3* vertices, uint remaini
             nextIntersection.normal = triangleNormal;
             nextIntersection.material = material;
 
-            bounceLight += calculateLighting(nextIntersection, spawns, nray, index, 
+            bounceLight += calculateLighting(nextIntersection, 100, nray, index, 
             light, accelerationStructure, materials);
         }
     }
@@ -1063,7 +1120,7 @@ device const MaterialGPU* materials, device const float3* vertices, uint remaini
             nextIntersection.normal = triangleNormal;
             nextIntersection.material = material;
 
-            bounceLight += calculateLighting(nextIntersection, spawns, nray, index, 
+            bounceLight += calculateLighting(nextIntersection, 100, nray, index, 
             light, accelerationStructure, materials);
         }
     }
@@ -1142,7 +1199,7 @@ device const MaterialGPU* materials, device const float3* vertices, uint remaini
     //     }
     // }  
 
-    // bounceLight /= (float(spawns) * float(samples)); // average bounce light over number of samples and spawns
+    // // bounceLight /= (float(spawns) * float(samples)); // average bounce light over number of samples and spawns
     // bounceLight /= float(spawns); // average bounce light over number of samples and spawns
 
     // return sampledLight + bounceLight;
@@ -1152,10 +1209,10 @@ device const MaterialGPU* materials, device const float3* vertices, uint remaini
 // typedef intersector<triangle_data>::result_type IntersectionResult;
 // need explicity specify the accelerationstructure buffer
 kernel void drawTriangle(device const CameraGPU* cameras, device const MaterialGPU * materials, 
-device const BoxLightGPU* boxLights, device const float3* vertices, device uchar* pixels, 
+device const SquareLightGPU* squareLights, device const float3* vertices, device uchar* pixels, 
 primitive_acceleration_structure accelerationStructure [[buffer(5)]], uint2 index [[thread_position_in_grid]]) {
     CameraGPU camera = cameras[0];
-    BoxLightGPU light = boxLights[0];
+    SquareLightGPU light = squareLights[0];
 
     float aspectRatio = float(camera.resolution.x / camera.resolution.y);
     float halfWidth = tan(camera.horizontalFov / 2.0);
@@ -1191,7 +1248,7 @@ primitive_acceleration_structure accelerationStructure [[buffer(5)]], uint2 inde
     int pixelOffset = (y * camera.resolution.x + x) * 4;
 
     float3 totalColor = recursiveLightingCalculation(r, index, light, accelerationStructure, materials,
-    vertices, maxBounces, maxBounces, 1000);
+    vertices, maxBounces, maxBounces, 100);
 
     float4 color = reinhartToneMapping(totalColor * cameraExposure(camera));
     pixels[pixelOffset + 0] = uchar(color.r * 255);

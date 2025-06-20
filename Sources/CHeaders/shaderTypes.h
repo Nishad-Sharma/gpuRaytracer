@@ -54,6 +54,14 @@ typedef struct {
 } BoxLightGPU;
 
 typedef struct {
+    simd_float3 center;
+    simd_float4 color;
+    simd_float3 emittedRadiance;
+    float width;
+    float depth;
+} SquareLightGPU;
+
+typedef struct {
     simd_float3 origin;
     simd_float3 direction;
 } RayGPU;

@@ -10,7 +10,6 @@ import Metal
 import simd
 import MetalKit
 
-let startTime = DispatchTime.now()
 
 // Replace your cube setup with Cornell Box
 let cornellBoxTriangles = createCornellBoxScene()
@@ -23,19 +22,51 @@ let camera = Camera(position: simd_float3(0, 0, 9), direction: direction,
 let roomSize: Float = 5.0
 let half = roomSize / 2.0
 
-var boxLight = BoxLight(
-    center: simd_float3(0, half - 0.05, 0), // Slightly below ceiling
-    material: Material(
-        diffuse: simd_float4(1.0, 0.95, 0.9, 1.0),
-        metallic: 0.0,
-        roughness: 0.0,
-        emissive: simd_float3(20, 20, 20) // Will be calculated from LightType
-    ),
-    LightType: .bulb(efficacy: 120, watts: 200),
-    width: 1.5,
-    height: 0.1,
-    depth: 1.5
+// var boxLight = BoxLight(
+//     center: simd_float3(0, half - 0.05, 0), // Slightly below ceiling
+//     material: Material(
+//         diffuse: simd_float4(1.0, 0.95, 0.9, 1.0),
+//         metallic: 0.0,
+//         roughness: 0.0,
+//         emissive: simd_float3(20, 20, 20) // Will be calculated from LightType
+//     ),
+//     LightType: .bulb(efficacy: 120, watts: 200),
+//     width: 1.5,
+//     height: 0.1,
+//     depth: 1.5
+// )
+
+// setup squareLight
+// Emissive material for the light triangles
+let lightMaterial = Material(
+    diffuse: simd_float4(1.0, 0.95, 0.9, 1.0),
+    metallic: 0.0,
+    roughness: 0.0,
+    emissive: simd_float3(20, 20, 20) // Adjust intensity as needed
 )
+
+let lightWidth: Float = 1.5
+let lightDepth: Float = 1.5
+let lightY: Float = half - 0.1
+let lightCenter = simd_float3(0, lightY, 0)
+let halfW = lightWidth / 2
+let halfD = lightDepth / 2
+
+// Vertices for the two triangles (rectangle split into two)
+let v0 = simd_float3(lightCenter.x - halfW, lightY, lightCenter.z - halfD)
+let v1 = simd_float3(lightCenter.x + halfW, lightY, lightCenter.z - halfD)
+let v2 = simd_float3(lightCenter.x + halfW, lightY, lightCenter.z + halfD)
+let v3 = simd_float3(lightCenter.x - halfW, lightY, lightCenter.z + halfD)
+
+var squareLight = SquareLight(
+    center: lightCenter,
+    vertices: [v0, v1, v2, v3],
+    material: lightMaterial,
+    LightType: .bulb(efficacy: 120, watts: 200), // Example values
+    width: lightWidth,
+    depth: lightDepth
+)
+// squareLight.material.emissive = squareLight.emittedRadiance;
 
 // boxLight.material.emissive = boxLight.emittedRadiance // Use calculated radiance
 
@@ -52,7 +83,9 @@ guard device.supportsRaytracing else {
 
 let accelerationStructure = setupAccelerationStructures(device: device, triangles: cornellBoxTriangles)
 // dont need render pipeline since we aren't rendering to screen - send to compute pipe
-pixels = drawTriangle(device: device, cameras: [camera], triangles: cornellBoxTriangles, boxLights: [boxLight], pixels: pixels, accelerationStructure: accelerationStructure)
+let startTime = DispatchTime.now()
+
+pixels = drawTriangle(device: device, cameras: [camera], triangles: cornellBoxTriangles, squareLights: [squareLight], pixels: pixels, accelerationStructure: accelerationStructure)
 
 savePixelArrayToImage(pixels: pixels, width: width, height: height, fileName: "cornell.png")
 let endTime = DispatchTime.now()
@@ -141,7 +174,7 @@ func createCornellBoxScene() -> [Triangle] {
     let tallBoxWidth: Float = 1.2
     let tallBoxHeight: Float = 2.8
     let tallBoxDepth: Float = 1.2
-    let tallBoxPosition = simd_float3(-1, -half + tallBoxHeight/2, -1.5) // Back left
+    let tallBoxPosition = simd_float3(-1, -half + tallBoxHeight/2 + 0.01, -1.5) // Back left
     let tallBoxRotationY: Float = Float.pi / 2.4 
     
     let tallBoxVertices = createRotatedBoxVertices(
@@ -157,7 +190,7 @@ func createCornellBoxScene() -> [Triangle] {
     // front cube
     let shortBoxSize: Float = 1.2
     let shortBoxHeight: Float = 1.2
-    let shortBoxPosition = simd_float3(0.7, -half + shortBoxHeight/2, 1.2) // Front right
+    let shortBoxPosition = simd_float3(0.7, -half + shortBoxHeight/2 + 0.01, 1.2) // Front right
     let shortBoxRotationY: Float = -Float.pi / 2.5 
     
     let shortBoxVertices = createRotatedBoxVertices(
@@ -169,40 +202,67 @@ func createCornellBoxScene() -> [Triangle] {
     )
     
     triangles.append(contentsOf: createBoxTriangles(vertices: shortBoxVertices, material: specularBoxMaterial))
+    // triangles.append(contentsOf: createBoxTriangles(vertices: shortBoxVertices, material: diffuseBoxMaterial))
 
-    // Create BoxLight for the ceiling
-    let ceilingLight = BoxLight(
-        center: simd_float3(0, half - 0.05, 0), // Slightly below ceiling
-        material: Material(
-            diffuse: simd_float4(1.0, 1.0, 1.0, 1.0),
-            metallic: 0.0,
-            roughness: 0.0,
-            emissive: simd_float3(20, 20, 20) // Will be calculated from LightType
-        ),
-        LightType: .bulb(efficacy: 120, watts: 200),
-        width: 1.5,
-        height: 0.1,
-        depth: 1.5
-    )
-    // ceilingLight.material.emissive = ceilingLight.emittedRadiance // Use calculated radiance
+    // // Create BoxLight for the ceiling
+    // let ceilingLight = BoxLight(
+    //     center: simd_float3(0, half - 0.05, 0), // Slightly below ceiling
+    //     material: Material(
+    //         diffuse: simd_float4(1.0, 1.0, 1.0, 1.0),
+    //         metallic: 0.0,
+    //         roughness: 0.0,
+    //         emissive: simd_float3(20, 20, 20) // Will be calculated from LightType
+    //     ),
+    //     LightType: .bulb(efficacy: 120, watts: 200),
+    //     width: 1.5,
+    //     height: 0.1,
+    //     depth: 1.5
+    // )
+    // // ceilingLight.material.emissive = ceilingLight.emittedRadiance // Use calculated radiance
     
-    // because material emmisive set poorly
+    // // because material emmisive set poorly
+    // let lightMaterial = Material(
+    //     diffuse: ceilingLight.material.diffuse,
+    //     metallic: ceilingLight.material.metallic,
+    //     roughness: ceilingLight.material.roughness,
+    //     emissive: ceilingLight.material.emissive // Use calculated radiance - poorly done atm fix later
+    // )
+
+    // let lightBoxVertices = createRotatedBoxVertices(
+    //     center: ceilingLight.center,
+    //     width: ceilingLight.width,
+    //     height: ceilingLight.height,
+    //     depth: ceilingLight.depth,
+    //     rotationY: 0
+    // )
+
+    // triangles.append(contentsOf: createBoxTriangles(vertices: lightBoxVertices, material: lightMaterial))
+
+    //setup emmisive triangles
+    let lightWidth: Float = 1.5
+    let lightHeight: Float = 1.5
+    let lightY: Float = half - 0.1
+    let lightCenter = simd_float3(0, lightY, 0)
+    let halfW: Float = lightWidth / 2
+    let halfD: Float = lightHeight / 2
+
+    // have to define lightmaterial here as well
     let lightMaterial = Material(
-        diffuse: ceilingLight.material.diffuse,
-        metallic: ceilingLight.material.metallic,
-        roughness: ceilingLight.material.roughness,
-        emissive: ceilingLight.material.emissive // Use calculated radiance - poorly done atm fix later
+        diffuse: simd_float4(1.0, 0.95, 0.9, 1.0),
+        metallic: 0.0,
+        roughness: 0.0,
+        emissive: simd_float3(20, 20, 20) // Adjust intensity as needed
     )
 
-    let lightBoxVertices = createRotatedBoxVertices(
-        center: ceilingLight.center,
-        width: ceilingLight.width,
-        height: ceilingLight.height,
-        depth: ceilingLight.depth,
-        rotationY: 0
-    )
+    // Vertices for the two triangles (rectangle split into two)
+    let v0 = simd_float3(lightCenter.x - halfW, lightY, lightCenter.z - halfD)
+    let v1 = simd_float3(lightCenter.x + halfW, lightY, lightCenter.z - halfD)
+    let v2 = simd_float3(lightCenter.x + halfW, lightY, lightCenter.z + halfD)
+    let v3 = simd_float3(lightCenter.x - halfW, lightY, lightCenter.z + halfD)
 
-    triangles.append(contentsOf: createBoxTriangles(vertices: lightBoxVertices, material: lightMaterial))
+    // add the two triangles (winding counter clock so normal faces down into the room)
+    triangles.append(Triangle(vertices: [v0, v1, v2], material: lightMaterial))
+    triangles.append(Triangle(vertices: [v0, v2, v3], material: lightMaterial))
 
     return triangles
 }
@@ -439,6 +499,37 @@ struct BoxLight {
         let surfaceArea = 2.0 * (width * height + width * depth + height * depth) // m²
         let radiantExitance = radiantFlux / surfaceArea // W/m²
         
+        // For Lambertian emitter: radiance = exitance / π
+        let radiance = radiantExitance / Float.pi // W/(sr·m²)
+        
+        return simd_float3(material.diffuse.x, material.diffuse.y, material.diffuse.z) * radiance
+    }
+}
+
+// square light made up of two triangles
+struct SquareLight {
+    var center: simd_float3
+    var vertices: [simd_float3]
+    var material: Material
+    var LightType: LightType
+    var width: Float
+    var depth: Float
+
+    // Convert to radiance for outgoing rays
+    var emittedRadiance: simd_float3 {
+        switch LightType {
+        case .bulb(let efficacy, let watts):
+            let luminousFlux = efficacy * watts // lm
+            let radiantFlux = luminousFlux / 683.0 // Convert lumens to watts (assuming 555 nm peak sensitivity)
+            return calculateRadiance(radiantFlux: radiantFlux)
+        case .radiometic(let radiantFlux):
+            return calculateRadiance(radiantFlux: radiantFlux)
+        }
+    }
+
+    func calculateRadiance(radiantFlux: Float) -> simd_float3 {
+        let area = width * depth // m²
+        let radiantExitance = radiantFlux / area // W/m²
         // For Lambertian emitter: radiance = exitance / π
         let radiance = radiantExitance / Float.pi // W/(sr·m²)
         
