@@ -486,7 +486,6 @@ SampleResultGPU sampleUniformHemisphere(float3 normal, uint2 index, uint sampleI
 
 // Cosine-weighted hemisphere sampling
 SampleResultGPU sampleCosineWeighted(float3 normal, uint2 index, uint sampleIndex, uint samples, uint i) {
-
     uint pow2 = nextPowerOfTwo(samples); // find smallest pow2 greater than number
     float2 u = hammersley2D(i, pow2); // Use Hammersley sequence for better distribution
     float u1 = u.x;
@@ -740,139 +739,189 @@ float3 calculateBRDFContribution(RayGPU ray, float3 point, float3 normal, Materi
     return finalColor;
 }
 
-float3 calculateLighting(IntersectionGPU intersection, uint samples, RayGPU ray, uint2 index, SquareLightGPU light, 
-primitive_acceleration_structure accelerationStructure, device const MaterialGPU* materials, uint maxBounces, uint remainingBounces) {
-    // only one light atm
-    float3 totalLight = float3(0.0, 0.0, 0.0);
-    uint samplesPerStrategy = samples / 3;
-    // float scaleFactor = 3.0; // Scale factor to balance contributions from different strategies
-    float beta = 2.0; // Power heuristic exponent
-    uint imageWidth = 800; 
-    for (uint i = 0; i < samplesPerStrategy; i++) {
-        // Sample box light
-        uint sampleId = (index.y * imageWidth + index.x) * (samplesPerStrategy) + i;
-        // SampleResultGPU lightSample = sampleBoxLight(light, intersection.point, index, sampleId, samplesPerStrategy, i);
-        SampleResultGPU lightSample = sampleSquareLight(light, intersection.point, index, sampleId, samplesPerStrategy, i);
+float3 calculateLighting(IntersectionGPU incomingIntersection, uint samples, RayGPU ray, uint2 index, SquareLightGPU light, 
+primitive_acceleration_structure accelerationStructure, device const MaterialGPU* materials, device const float3* vertices, intersection_params params, intersection_query<triangle_data> intersectionQuery, uint maxBounces, uint remainingBounces) {
+    if (remainingBounces == 0) {
+        return float3(0.0, 0.0, 0.0); // No more bounces left
+    } else {
+        // only one light atm
+        float3 totalLight = float3(0.0, 0.0, 0.0);
+        float3 bounceLight = float3(0.0, 0.0, 0.0);
+        uint samplesPerStrategy = samples / 3;
+        // float scaleFactor = 3.0; // Scale factor to balance contributions from different strategies
+        float beta = 2.0; // Power heuristic exponent
+        uint imageWidth = 800; 
+        for (uint i = 0; i < samplesPerStrategy; i++) {
+            // Sample box light
+            uint sampleId = (index.y * imageWidth + index.x) * (samplesPerStrategy) + i;
+            // SampleResultGPU lightSample = sampleBoxLight(light, intersection.point, index, sampleId, samplesPerStrategy, i);
+            SampleResultGPU lightSample = sampleSquareLight(light, incomingIntersection.point, index, sampleId, samplesPerStrategy, i);
 
-        // Calculate PDFs for other strategies
-        float cosineWeightedPdf = max(dot(intersection.normal, lightSample.direction), 0.0) / M_PI_F;
-        float vndfPdf = calculateVNDFPdf(-ray.direction, intersection.normal, lightSample.direction, 
-        intersection.material.roughness);
+            // Calculate PDFs for other strategies
+            float cosineWeightedPdf = max(dot(incomingIntersection.normal, lightSample.direction), 0.0) / M_PI_F;
+            float vndfPdf = calculateVNDFPdf(-ray.direction, incomingIntersection.normal, lightSample.direction, 
+            incomingIntersection.material.roughness);
 
-        float3 radiance = traceTriangleLightRay(intersection.point, lightSample.direction, accelerationStructure, materials);
-        if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
-            float weight = powerHeuristic(lightSample.pdf, cosineWeightedPdf, vndfPdf, beta);
-            float3 brdf = calculateBRDFContribution(ray, intersection.point, intersection.normal,
-            intersection.material, lightSample.direction, radiance);
-            totalLight += brdf * weight / lightSample.pdf;
-        }
-    }
-    for (uint i = 0; i < samplesPerStrategy; i++) {
-        // Sample cosine-weighted hemisphere
-        uint sampleId = (index.y * imageWidth + index.x) * (samplesPerStrategy) + i;
-        SampleResultGPU cosineSample = sampleCosineWeighted(intersection.normal, index, sampleId, 
-        samplesPerStrategy, i + samplesPerStrategy); // use i+ samplesPerStrategy to avoid correlation between two strategies
-        
-        // Calculate PDFs for other strategies
-        // float lightPdf = calculateBoxLightPdf(light, intersection.point, cosineSample.direction);
-        float lightPdf = calculateSquareLightPdf(light, intersection.point, cosineSample.direction);
-        float vndfPdf = calculateVNDFPdf(-ray.direction, intersection.normal, cosineSample.direction, 
-        intersection.material.roughness);
-
-        float3 radiance = traceTriangleLightRay(intersection.point, cosineSample.direction, accelerationStructure, materials);
-        if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
-            float weight = powerHeuristic(cosineSample.pdf, lightPdf, vndfPdf, beta);
-            float3 brdf = calculateBRDFContribution(ray, intersection.point, intersection.normal,
-            intersection.material, cosineSample.direction, radiance);
-            totalLight += brdf * weight / cosineSample.pdf;
-        }
-    }
-    for (uint i = 0; i < samplesPerStrategy; i++) {
-        // Sample VNDF
-        uint sampleId = (index.y * imageWidth + index.x) * (samplesPerStrategy) + i;
-        SampleResultGPU vndfSample = sampleVNDF(-ray.direction, intersection.normal, 
-        intersection.material.roughness, index, sampleId, samplesPerStrategy, i + 2 * samplesPerStrategy);
-        
-        // Calculate PDFs for other strategies
-        // float lightPdf = calculateBoxLightPdf(light, intersection.point, vndfSample.direction);
-        float lightPdf = calculateSquareLightPdf(light, intersection.point, vndfSample.direction);
-        float cosineWeightedPdf = max(dot(intersection.normal, vndfSample.direction), 0.0) / M_PI_F;
-
-        float3 radiance = traceTriangleLightRay(intersection.point, vndfSample.direction, accelerationStructure, materials);
-        if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
-            float weight = powerHeuristic(vndfSample.pdf, lightPdf, cosineWeightedPdf, beta);
-            float3 brdf = calculateBRDFContribution(ray, intersection.point, intersection.normal,
-            intersection.material, vndfSample.direction, radiance);
-            totalLight += brdf * weight / vndfSample.pdf;
-        }
-    }
-    // return totalLight;
-    return totalLight / float (samplesPerStrategy * 3);
-}
-
-// recursive ray trace for bounces not including first (MIS) and last (direct light)
-float3 traceBounceRay(ray bRay, primitive_acceleration_structure accelerationStructure, 
-                     device const MaterialGPU* materials, device const float3* vertices, 
-                     BoxLightGPU light, uint2 index, int remainingBounces, float3 bounceThroughput) {
-
-    if (remainingBounces <= 0) return float3(0.0, 0.0, 0.0);
-
-    intersection_params params;
-    intersection_query<triangle_data> i;
-    params.assume_geometry_type(geometry_type::triangle);
-    params.force_opacity(forced_opacity::opaque);
-    params.accept_any_intersection(false);
-    
-    i.reset(bRay, accelerationStructure, params);
-    i.next();
-    
-    intersector<triangle_data>::result_type intersection;
-    intersection.type = i.get_committed_intersection_type();
-    intersection.distance = i.get_committed_distance();
-    intersection.primitive_id = i.get_committed_primitive_id();
-    
-    if (intersection.type != intersection_type::triangle) {
-        return float3(0.0, 0.0, 0.0); // Miss
-    }
-    
-    MaterialGPU material = materials[intersection.primitive_id];
-
-    // if (length(material.emissive) > 0.0) {
-    //     return material.emissive * bounceThroughput;
-    // }
-
-    uint triangleIndex = intersection.primitive_id;
-    float3 v0 = vertices[triangleIndex * 3 + 0];
-    float3 v1 = vertices[triangleIndex * 3 + 1];
-    float3 v2 = vertices[triangleIndex * 3 + 2];
-    
-    float3 edge1 = v1 - v0;
-    float3 edge2 = v2 - v0;
-    float3 triangleNormal = normalize(cross(edge1, edge2));
-
-    if (remainingBounces == 1) {
-        // sample randomly
-        uint randomSamples = 50;
-        float3 indirectLight = float3(0.0, 0.0, 0.0);
-        float3 hitPoint = bRay.origin + bRay.direction * intersection.distance;
-        
-        for (uint i = 0; i < randomSamples; i++) {
-            SampleResultGPU sample = sampleUniformHemisphere(triangleNormal, index, i, randomSamples, i);
-            float3 radiance = traceTriangleLightRay(hitPoint, sample.direction, accelerationStructure, materials);
+            float3 radiance = traceTriangleLightRay(incomingIntersection.point, lightSample.direction, accelerationStructure, materials);
             if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
-                float3 brdf = material.diffuse.rgb * Fd_Lambert();
-                float cosTheta = max(0.0, dot(triangleNormal, sample.direction));
-                indirectLight += brdf * radiance * cosTheta;
+                float weight = powerHeuristic(lightSample.pdf, cosineWeightedPdf, vndfPdf, beta);
+                float3 brdf = calculateBRDFContribution(ray, incomingIntersection.point, incomingIntersection.normal,
+                incomingIntersection.material, lightSample.direction, radiance);
+                totalLight += brdf * weight / lightSample.pdf;
             }
         }
-        return indirectLight / float(randomSamples);        
-    } else {
-        return float3 (0.0, 0.0, 0.0);
+        for (uint i = 0; i < samplesPerStrategy; i++) {
+            // Sample cosine-weighted hemisphere
+            uint sampleId = (index.y * imageWidth + index.x) * (samplesPerStrategy) + i;
+            SampleResultGPU cosineSample = sampleCosineWeighted(incomingIntersection.normal, index, sampleId, 
+            samplesPerStrategy, i + samplesPerStrategy); // use i+ samplesPerStrategy to avoid correlation between two strategies
+            
+            // Calculate PDFs for other strategies
+            // float lightPdf = calculateBoxLightPdf(light, intersection.point, cosineSample.direction);
+            float lightPdf = calculateSquareLightPdf(light, incomingIntersection.point, cosineSample.direction);
+            float vndfPdf = calculateVNDFPdf(-ray.direction, incomingIntersection.normal, cosineSample.direction, 
+            incomingIntersection.material.roughness);
+
+            float3 radiance = traceTriangleLightRay(incomingIntersection.point, cosineSample.direction, accelerationStructure, materials);
+            if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
+                float weight = powerHeuristic(cosineSample.pdf, lightPdf, vndfPdf, beta);
+                float3 brdf = calculateBRDFContribution(ray, incomingIntersection.point, incomingIntersection.normal,
+                incomingIntersection.material, cosineSample.direction, radiance);
+                totalLight += brdf * weight / cosineSample.pdf;
+            }
+            if (remainingBounces > 1) {
+                // accumulate bounce light
+                struct ray newRay;
+                newRay.origin = incomingIntersection.point + incomingIntersection.normal * 1e-4;
+                newRay.direction = cosineSample.direction;
+                newRay.min_distance = 0.001f;
+                newRay.max_distance = 1000.0f;
+
+                intersectionQuery.reset(newRay, accelerationStructure, params);
+                intersectionQuery.next();
+
+                // pull required info about the committed intersection.
+                intersector<triangle_data>::result_type intersection;
+                intersection.type = intersectionQuery.get_committed_intersection_type(); // triangle, boundingbox, nothing, curve if implemented
+                intersection.distance = intersectionQuery.get_committed_distance();
+                intersection.primitive_id = intersectionQuery.get_committed_primitive_id();
+                MaterialGPU material = materials[intersection.primitive_id];
+
+                if (intersection.type != intersection_type::triangle) {
+                    // bounceLight += float3(0.0, 0.0, 0.0); // Miss
+                    continue;
+                } 
+                else if (length(material.emissive) > 0.0) {
+                    // check hit light source
+                    continue;
+                    bounceLight += material.emissive;
+                } 
+                else {
+                    uint triangleIndex = intersection.primitive_id;
+                    float3 v0 = vertices[triangleIndex * 3 + 0];
+                    float3 v1 = vertices[triangleIndex * 3 + 1];
+                    float3 v2 = vertices[triangleIndex * 3 + 2];
+                    float3 edge1 = v1 - v0;
+                    float3 edge2 = v2 - v0;
+                    float3 triangleNormal = normalize(cross(edge1, edge2));
+                    
+                    RayGPU nray;
+                    nray.origin = newRay.origin;
+                    nray.direction = newRay.direction;
+
+                    IntersectionGPU nextIntersection;
+                    nextIntersection.type = Hit;
+                    nextIntersection.point = newRay.origin + newRay.direction * intersection.distance;
+                    nextIntersection.ray = nray;
+                    nextIntersection.normal = triangleNormal;
+                    nextIntersection.material = material;
+                    float3 brdfCosine = calculateBRDFContribution(ray, incomingIntersection.point, incomingIntersection.normal, material, newRay.direction, float3(1.0));
+                    float3 throughput = brdfCosine / (cosineSample.pdf + 1e-6);
+
+                    bounceLight += throughput * calculateLighting(nextIntersection, 30, nray, index, light,
+                    accelerationStructure, materials, vertices, params, intersectionQuery, maxBounces, remainingBounces - 1);
+                    // / float (samples);
+                }
+            }
+        }
+        for (uint i = 0; i < samplesPerStrategy; i++) {
+            // Sample VNDF
+            uint sampleId = (index.y * imageWidth + index.x) * (samplesPerStrategy) + i;
+            SampleResultGPU vndfSample = sampleVNDF(-ray.direction, incomingIntersection.normal, 
+            incomingIntersection.material.roughness, index, sampleId, samplesPerStrategy, i + 2 * samplesPerStrategy);
+            
+            // Calculate PDFs for other strategies
+            // float lightPdf = calculateBoxLightPdf(light, intersection.point, vndfSample.direction);
+            float lightPdf = calculateSquareLightPdf(light, incomingIntersection.point, vndfSample.direction);
+            float cosineWeightedPdf = max(dot(incomingIntersection.normal, vndfSample.direction), 0.0) / M_PI_F;
+
+            float3 radiance = traceTriangleLightRay(incomingIntersection.point, vndfSample.direction, accelerationStructure, materials);
+            if (radiance.x != -1.0 || radiance.y != -1.0 || radiance.z != -1.0) {
+                float weight = powerHeuristic(vndfSample.pdf, lightPdf, cosineWeightedPdf, beta);
+                float3 brdf = calculateBRDFContribution(ray, incomingIntersection.point, incomingIntersection.normal,
+                incomingIntersection.material, vndfSample.direction, radiance);
+                totalLight += brdf * weight / vndfSample.pdf;
+            }
+            if (remainingBounces > 1) {
+                // accumulate bounce light
+                struct ray newRay;
+                newRay.origin = incomingIntersection.point + incomingIntersection.normal * 1e-4;
+                newRay.direction = vndfSample.direction;
+                newRay.min_distance = 0.001f;
+                newRay.max_distance = 1000.0f;
+
+                intersectionQuery.reset(newRay, accelerationStructure, params);
+                intersectionQuery.next();
+
+                // pull required info about the committed intersection.
+                intersector<triangle_data>::result_type intersection;
+
+                intersection.type = intersectionQuery.get_committed_intersection_type(); // triangle, boundingbox, nothing, curve if implemented
+                intersection.distance = intersectionQuery.get_committed_distance();
+                intersection.primitive_id = intersectionQuery.get_committed_primitive_id();
+                MaterialGPU material = materials[intersection.primitive_id];
+
+                if (intersection.type != intersection_type::triangle) {
+                    bounceLight += float3(0.0, 0.0, 0.0); // Miss
+                    // continue;
+                } 
+                else if (length(material.emissive) > 0.0) {
+                    // check hit light source
+                    continue;
+                    bounceLight += material.emissive;
+                } 
+                else {
+                    uint triangleIndex = intersection.primitive_id;
+                    float3 v0 = vertices[triangleIndex * 3 + 0];
+                    float3 v1 = vertices[triangleIndex * 3 + 1];
+                    float3 v2 = vertices[triangleIndex * 3 + 2];
+                    float3 edge1 = v1 - v0;
+                    float3 edge2 = v2 - v0;
+                    float3 triangleNormal = normalize(cross(edge1, edge2));
+                    
+                    RayGPU nray;
+                    nray.origin = newRay.origin;
+                    nray.direction = newRay.direction;
+
+                    IntersectionGPU nextIntersection;
+                    nextIntersection.type = Hit;
+                    nextIntersection.point = newRay.origin + newRay.direction * intersection.distance;
+                    nextIntersection.ray = nray;
+                    nextIntersection.normal = triangleNormal;
+                    nextIntersection.material = material;
+                    float3 brdfCosine = calculateBRDFContribution(ray, incomingIntersection.point, incomingIntersection.normal, material, newRay.direction, float3(1.0));
+                    float3 throughput = brdfCosine / (vndfSample.pdf + 1e-6);
+
+                    bounceLight += throughput * calculateLighting(nextIntersection, 30, nray, index, light,
+                    accelerationStructure, materials, vertices, params, intersectionQuery, maxBounces, remainingBounces - 1);
+                    // / float (samples);
+                }
+            }
+        }
+        // return (totalLight + bounceLight) / float (samplesPerStrategy * 3);
+        return totalLight / float(samplesPerStrategy * 3) + bounceLight / float(60);
+        // return totalLight / float(samplesPerStrategy * 3) + bounceLight / float(90);
     }
-    
-    // sample hemisphere and recurse can maybe just do 1 bounce here     
-    // return material.diffuse.rgb * traceBounceRay(newRay, accelerationStructure, materials, 
-    //                                             vertices, light, remainingBounces - 1);
 }
 
 // TODO: make proper recursive 
@@ -932,7 +981,6 @@ float3 recursiveLightingCalculation(ray r, uint2 index, SquareLightGPU light, pr
     float3 edge2 = v2 - v0;
     float3 triangleNormal = normalize(cross(edge1, edge2)); // just face normal atm (fine for boxes)
     
-
     RayGPU gRay;
     gRay.origin = r.origin;
     gRay.direction = r.direction;
@@ -944,189 +992,189 @@ float3 recursiveLightingCalculation(ray r, uint2 index, SquareLightGPU light, pr
     closestIntersection.material = material;
 
     float3 sampledLight = calculateLighting(closestIntersection, samples, gRay, index, 
-    light, accelerationStructure, materials);
+    light, accelerationStructure, materials, vertices, params, intersectionQuery, 2, 2);
+
     return sampledLight;
 
-    float3 bounceLight = float3(0.0, 0.0, 0.0);
-    uint spawns = 30;
-    uint spawnsPerStrategy = spawns / 3;
+    // float3 bounceLight = float3(0.0, 0.0, 0.0);
+    // uint spawns = 30;
+    // uint spawnsPerStrategy = spawns / 3;
 
-    // do mis sampling to generate new directions for 3 strategies
-    uint imageWidth = 800;
-    // direct light case
-    for (uint i = 0; i < spawnsPerStrategy; i++) {
-        uint sampleId = (index.y * imageWidth + index.x) * (spawnsPerStrategy) + i;
-        // SampleResultGPU lightSample = sampleBoxLight(light, closestIntersection.point, index, sampleId, spawnsPerStrategy, i);
-        SampleResultGPU lightSample = sampleSquareLight(light, closestIntersection.point, index, sampleId, spawnsPerStrategy, i);
-        float3 newDirection = lightSample.direction;
+    // // do mis sampling to generate new directions for 3 strategies
+    // uint imageWidth = 800;
+    // // direct light case
+    // for (uint i = 0; i < spawnsPerStrategy; i++) {
+    //     uint sampleId = (index.y * imageWidth + index.x) * (spawnsPerStrategy) + i;
+    //     // SampleResultGPU lightSample = sampleBoxLight(light, closestIntersection.point, index, sampleId, spawnsPerStrategy, i);
+    //     SampleResultGPU lightSample = sampleSquareLight(light, closestIntersection.point, index, sampleId, spawnsPerStrategy, i);
+    //     float3 newDirection = lightSample.direction;
 
-        ray newRay;
-        newRay.origin = closestIntersection.point + triangleNormal * 1e-4;
-        newRay.direction = newDirection;
-        newRay.min_distance = r.min_distance;
-        newRay.max_distance = r.max_distance;
+    //     ray newRay;
+    //     newRay.origin = closestIntersection.point + triangleNormal * 1e-4;
+    //     newRay.direction = newDirection;
+    //     newRay.min_distance = r.min_distance;
+    //     newRay.max_distance = r.max_distance;
 
-        intersectionQuery.reset(newRay, accelerationStructure, params);
-        intersectionQuery.next();
+    //     intersectionQuery.reset(newRay, accelerationStructure, params);
+    //     intersectionQuery.next();
 
-        // pull required info about the committed intersection.
-        intersection.type = intersectionQuery.get_committed_intersection_type(); // triangle, boundingbox, nothing, curve if implemented
-        intersection.distance = intersectionQuery.get_committed_distance();
-        intersection.primitive_id = intersectionQuery.get_committed_primitive_id();
-        material = materials[intersection.primitive_id];
+    //     // pull required info about the committed intersection.
+    //     intersection.type = intersectionQuery.get_committed_intersection_type(); // triangle, boundingbox, nothing, curve if implemented
+    //     intersection.distance = intersectionQuery.get_committed_distance();
+    //     intersection.primitive_id = intersectionQuery.get_committed_primitive_id();
+    //     material = materials[intersection.primitive_id];
 
-        if (intersection.type != intersection_type::triangle) {
-            bounceLight += float3(0.0, 0.0, 0.0); // Miss
-            // continue;
-        } 
-        else if (length(material.emissive) > 0.0) {
-            // check hit light source
-            continue;
-            bounceLight += material.emissive;
-        } 
-        else {
-            // now handle normal triangle hit
-            // calc triangle normal
-            triangleIndex = intersection.primitive_id;
-            v0 = vertices[triangleIndex * 3 + 0];
-            v1 = vertices[triangleIndex * 3 + 1];
-            v2 = vertices[triangleIndex * 3 + 2];
-            edge1 = v1 - v0;
-            edge2 = v2 - v0;
-            triangleNormal = normalize(cross(edge1, edge2)); // just face normal atm (fine for boxes)
+    //     if (intersection.type != intersection_type::triangle) {
+    //         bounceLight += float3(0.0, 0.0, 0.0); // Miss
+    //         // continue;
+    //     } 
+    //     else if (length(material.emissive) > 0.0) {
+    //         // check hit light source
+    //         continue;
+    //         bounceLight += material.emissive;
+    //     } 
+    //     else {
+    //         // now handle normal triangle hit
+    //         // calc triangle normal
+    //         triangleIndex = intersection.primitive_id;
+    //         v0 = vertices[triangleIndex * 3 + 0];
+    //         v1 = vertices[triangleIndex * 3 + 1];
+    //         v2 = vertices[triangleIndex * 3 + 2];
+    //         edge1 = v1 - v0;
+    //         edge2 = v2 - v0;
+    //         triangleNormal = normalize(cross(edge1, edge2)); // just face normal atm (fine for boxes)
             
-            RayGPU nray;
-            nray.origin = newRay.origin;
-            nray.direction = newRay.direction;
+    //         RayGPU nray;
+    //         nray.origin = newRay.origin;
+    //         nray.direction = newRay.direction;
 
-            IntersectionGPU nextIntersection;
-            nextIntersection.type = Hit;
-            nextIntersection.point = newRay.origin + newRay.direction * intersection.distance;
-            nextIntersection.ray = nray;
-            nextIntersection.normal = triangleNormal;
-            nextIntersection.material = material;
+    //         IntersectionGPU nextIntersection;
+    //         nextIntersection.type = Hit;
+    //         nextIntersection.point = newRay.origin + newRay.direction * intersection.distance;
+    //         nextIntersection.ray = nray;
+    //         nextIntersection.normal = triangleNormal;
+    //         nextIntersection.material = material;
 
-            bounceLight += calculateLighting(nextIntersection, 100, nray, index, 
-            light, accelerationStructure, materials);
-        }
-    }
-    // cosineweighted case
-    for (uint i = 0; i < spawnsPerStrategy; i++) {
-        uint sampleId = (index.y * imageWidth + index.x) * (spawnsPerStrategy) + i;
-        SampleResultGPU cosineSample = sampleCosineWeighted(closestIntersection.normal, index, sampleId, 
-        spawnsPerStrategy, i + spawnsPerStrategy);
-        float3 newDirection = cosineSample.direction;
+    //         bounceLight += calculateLighting(nextIntersection, 100, nray, index, 
+    //         light, accelerationStructure, materials);
+    //     }
+    // }
+    // // cosineweighted case
+    // for (uint i = 0; i < spawnsPerStrategy; i++) {
+    //     uint sampleId = (index.y * imageWidth + index.x) * (spawnsPerStrategy) + i;
+    //     SampleResultGPU cosineSample = sampleCosineWeighted(closestIntersection.normal, index, sampleId, 
+    //     spawnsPerStrategy, i + spawnsPerStrategy);
+    //     float3 newDirection = cosineSample.direction;
 
-        ray newRay;
-        newRay.origin = closestIntersection.point + triangleNormal * 1e-4;
-        newRay.direction = newDirection;
-        newRay.min_distance = r.min_distance;
-        newRay.max_distance = r.max_distance;
+    //     ray newRay;
+    //     newRay.origin = closestIntersection.point + triangleNormal * 1e-4;
+    //     newRay.direction = newDirection;
+    //     newRay.min_distance = r.min_distance;
+    //     newRay.max_distance = r.max_distance;
 
-        intersectionQuery.reset(newRay, accelerationStructure, params);
-        intersectionQuery.next();
+    //     intersectionQuery.reset(newRay, accelerationStructure, params);
+    //     intersectionQuery.next();
 
-        // pull required info about the committed intersection.
-        intersection.type = intersectionQuery.get_committed_intersection_type(); // triangle, boundingbox, nothing, curve if implemented
-        intersection.distance = intersectionQuery.get_committed_distance();
-        intersection.primitive_id = intersectionQuery.get_committed_primitive_id();
-        material = materials[intersection.primitive_id];
+    //     // pull required info about the committed intersection.
+    //     intersection.type = intersectionQuery.get_committed_intersection_type(); // triangle, boundingbox, nothing, curve if implemented
+    //     intersection.distance = intersectionQuery.get_committed_distance();
+    //     intersection.primitive_id = intersectionQuery.get_committed_primitive_id();
+    //     material = materials[intersection.primitive_id];
 
-        if (intersection.type != intersection_type::triangle) {
-            // bounceLight += float3(0.0, 0.0, 0.0); // Miss
-            continue;
-        } 
-        else if (length(material.emissive) > 0.0) {
-            // check hit light source
-            continue;
-            bounceLight += material.emissive;
-        } 
-        else {
-            // now handle normal triangle hit
-            // calc triangle normal
-            triangleIndex = intersection.primitive_id;
-            v0 = vertices[triangleIndex * 3 + 0];
-            v1 = vertices[triangleIndex * 3 + 1];
-            v2 = vertices[triangleIndex * 3 + 2];
-            edge1 = v1 - v0;
-            edge2 = v2 - v0;
-            triangleNormal = normalize(cross(edge1, edge2)); // just face normal atm (fine for boxes)
+    //     if (intersection.type != intersection_type::triangle) {
+    //         // bounceLight += float3(0.0, 0.0, 0.0); // Miss
+    //         continue;
+    //     } 
+    //     else if (length(material.emissive) > 0.0) {
+    //         // check hit light source
+    //         continue;
+    //         bounceLight += material.emissive;
+    //     } 
+    //     else {
+    //         // now handle normal triangle hit
+    //         // calc triangle normal
+    //         triangleIndex = intersection.primitive_id;
+    //         v0 = vertices[triangleIndex * 3 + 0];
+    //         v1 = vertices[triangleIndex * 3 + 1];
+    //         v2 = vertices[triangleIndex * 3 + 2];
+    //         edge1 = v1 - v0;
+    //         edge2 = v2 - v0;
+    //         triangleNormal = normalize(cross(edge1, edge2)); // just face normal atm (fine for boxes)
             
-            RayGPU nray;
-            nray.origin = newRay.origin;
-            nray.direction = newRay.direction;
+    //         RayGPU nray;
+    //         nray.origin = newRay.origin;
+    //         nray.direction = newRay.direction;
 
-            IntersectionGPU nextIntersection;
-            nextIntersection.type = Hit;
-            nextIntersection.point = newRay.origin + newRay.direction * intersection.distance;
-            nextIntersection.ray = nray;
-            nextIntersection.normal = triangleNormal;
-            nextIntersection.material = material;
+    //         IntersectionGPU nextIntersection;
+    //         nextIntersection.type = Hit;
+    //         nextIntersection.point = newRay.origin + newRay.direction * intersection.distance;
+    //         nextIntersection.ray = nray;
+    //         nextIntersection.normal = triangleNormal;
+    //         nextIntersection.material = material;
 
-            bounceLight += calculateLighting(nextIntersection, 100, nray, index, 
-            light, accelerationStructure, materials);
-        }
-    }
-    // vndf case
-    for (uint i = 0; i < spawnsPerStrategy; i++) {
-        uint sampleId = (index.y * imageWidth + index.x) * (spawnsPerStrategy) + i;
-        SampleResultGPU vndfSample = sampleVNDF(-gRay.direction, closestIntersection.normal, 
-        closestIntersection.material.roughness, index, sampleId, spawnsPerStrategy, i + 2 * spawnsPerStrategy);
-        float3 newDirection = vndfSample.direction;
+    //         bounceLight += calculateLighting(nextIntersection, 100, nray, index, 
+    //         light, accelerationStructure, materials);
+    //     }
+    // }
+    // // vndf case
+    // for (uint i = 0; i < spawnsPerStrategy; i++) {
+    //     uint sampleId = (index.y * imageWidth + index.x) * (spawnsPerStrategy) + i;
+    //     SampleResultGPU vndfSample = sampleVNDF(-gRay.direction, closestIntersection.normal, 
+    //     closestIntersection.material.roughness, index, sampleId, spawnsPerStrategy, i + 2 * spawnsPerStrategy);
+    //     float3 newDirection = vndfSample.direction;
 
-        ray newRay;
-        newRay.origin = closestIntersection.point + triangleNormal * 1e-4;
-        newRay.direction = newDirection;
-        newRay.min_distance = r.min_distance;
-        newRay.max_distance = r.max_distance;
+    //     ray newRay;
+    //     newRay.origin = closestIntersection.point + triangleNormal * 1e-4;
+    //     newRay.direction = newDirection;
+    //     newRay.min_distance = r.min_distance;
+    //     newRay.max_distance = r.max_distance;
 
-        intersectionQuery.reset(newRay, accelerationStructure, params);
-        intersectionQuery.next();
+    //     intersectionQuery.reset(newRay, accelerationStructure, params);
+    //     intersectionQuery.next();
 
-        // pull required info about the committed intersection.
-        intersection.type = intersectionQuery.get_committed_intersection_type(); // triangle, boundingbox, nothing, curve if implemented
-        intersection.distance = intersectionQuery.get_committed_distance();
-        intersection.primitive_id = intersectionQuery.get_committed_primitive_id();
-        material = materials[intersection.primitive_id];
+    //     // pull required info about the committed intersection.
+    //     intersection.type = intersectionQuery.get_committed_intersection_type(); // triangle, boundingbox, nothing, curve if implemented
+    //     intersection.distance = intersectionQuery.get_committed_distance();
+    //     intersection.primitive_id = intersectionQuery.get_committed_primitive_id();
+    //     material = materials[intersection.primitive_id];
 
-        if (intersection.type != intersection_type::triangle) {
-            // bounceLight += float3(0.0, 0.0, 0.0); // Miss
-            continue;
-        } 
-        else if (length(material.emissive) > 0.0) {
-            // check hit light source
-            continue;
-            bounceLight += material.emissive;
-        } 
-        else {
-            // now handle normal triangle hit
-            // calc triangle normal
-            triangleIndex = intersection.primitive_id;
-            v0 = vertices[triangleIndex * 3 + 0];
-            v1 = vertices[triangleIndex * 3 + 1];
-            v2 = vertices[triangleIndex * 3 + 2];
-            edge1 = v1 - v0;
-            edge2 = v2 - v0;
-            triangleNormal = normalize(cross(edge1, edge2)); // just face normal atm (fine for boxes)
+    //     if (intersection.type != intersection_type::triangle) {
+    //         // bounceLight += float3(0.0, 0.0, 0.0); // Miss
+    //         continue;
+    //     } 
+    //     else if (length(material.emissive) > 0.0) {
+    //         // check hit light source
+    //         continue;
+    //         bounceLight += material.emissive;
+    //     } 
+    //     else {
+    //         // now handle normal triangle hit
+    //         // calc triangle normal
+    //         triangleIndex = intersection.primitive_id;
+    //         v0 = vertices[triangleIndex * 3 + 0];
+    //         v1 = vertices[triangleIndex * 3 + 1];
+    //         v2 = vertices[triangleIndex * 3 + 2];
+    //         edge1 = v1 - v0;
+    //         edge2 = v2 - v0;
+    //         triangleNormal = normalize(cross(edge1, edge2)); // just face normal atm (fine for boxes)
             
-            RayGPU nray;
-            nray.origin = newRay.origin;
-            nray.direction = newRay.direction;
+    //         RayGPU nray;
+    //         nray.origin = newRay.origin;
+    //         nray.direction = newRay.direction;
 
-            IntersectionGPU nextIntersection;
-            nextIntersection.type = Hit;
-            nextIntersection.point = newRay.origin + newRay.direction * intersection.distance;
-            nextIntersection.ray = nray;
-            nextIntersection.normal = triangleNormal;
-            nextIntersection.material = material;
+    //         IntersectionGPU nextIntersection;
+    //         nextIntersection.type = Hit;
+    //         nextIntersection.point = newRay.origin + newRay.direction * intersection.distance;
+    //         nextIntersection.ray = nray;
+    //         nextIntersection.normal = triangleNormal;
+    //         nextIntersection.material = material;
 
-            bounceLight += calculateLighting(nextIntersection, 100, nray, index, 
-            light, accelerationStructure, materials);
-        }
-    }
-
-    bounceLight /= float(spawnsPerStrategy * 3);
-    return sampledLight + bounceLight;
+    //         bounceLight += calculateLighting(nextIntersection, 100, nray, index, 
+    //         light, accelerationStructure, materials);
+    //     }
+    // }
+    // bounceLight /= float(spawnsPerStrategy * 3);
+    // return sampledLight + bounceLight;
 
 
 
@@ -1248,7 +1296,9 @@ primitive_acceleration_structure accelerationStructure [[buffer(5)]], uint2 inde
     int pixelOffset = (y * camera.resolution.x + x) * 4;
 
     float3 totalColor = recursiveLightingCalculation(r, index, light, accelerationStructure, materials,
-    vertices, maxBounces, maxBounces, 100);
+    vertices, maxBounces, maxBounces, 99);
+    // float3 sampledLight = calculateLighting(closestIntersection, samples, gRay, index, 
+    // light, accelerationStructure, materials, vertices, params, intersectionQuery, 2, 2);
 
     float4 color = reinhartToneMapping(totalColor * cameraExposure(camera));
     pixels[pixelOffset + 0] = uchar(color.r * 255);

@@ -47,7 +47,7 @@ let lightMaterial = Material(
 
 let lightWidth: Float = 1.5
 let lightDepth: Float = 1.5
-let lightY: Float = half - 0.1
+let lightY: Float = half - 0.01
 let lightCenter = simd_float3(0, lightY, 0)
 let halfW = lightWidth / 2
 let halfD = lightDepth / 2
@@ -241,7 +241,7 @@ func createCornellBoxScene() -> [Triangle] {
     //setup emmisive triangles
     let lightWidth: Float = 1.5
     let lightHeight: Float = 1.5
-    let lightY: Float = half - 0.1
+    let lightY: Float = half - 0.01
     let lightCenter = simd_float3(0, lightY, 0)
     let halfW: Float = lightWidth / 2
     let halfD: Float = lightHeight / 2
