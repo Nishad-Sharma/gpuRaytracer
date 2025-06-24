@@ -11,8 +11,7 @@ import simd
 import MetalKit
 
 
-// Replace your cube setup with Cornell Box
-let cornellBoxTriangles = createCornellBoxScene()
+
 
 // Position camera to look into the room from the front
 let direction = simd_normalize(simd_float3(0, 0, -2.5) - simd_float3(0, 0, 9))
@@ -21,29 +20,6 @@ let camera = Camera(position: simd_float3(0, 0, 9), direction: direction,
 
 let roomSize: Float = 5.0
 let half = roomSize / 2.0
-
-// var boxLight = BoxLight(
-//     center: simd_float3(0, half - 0.05, 0), // Slightly below ceiling
-//     material: Material(
-//         diffuse: simd_float4(1.0, 0.95, 0.9, 1.0),
-//         metallic: 0.0,
-//         roughness: 0.0,
-//         emissive: simd_float3(20, 20, 20) // Will be calculated from LightType
-//     ),
-//     LightType: .bulb(efficacy: 120, watts: 200),
-//     width: 1.5,
-//     height: 0.1,
-//     depth: 1.5
-// )
-
-// setup squareLight
-// Emissive material for the light triangles
-let lightMaterial = Material(
-    diffuse: simd_float4(1.0, 0.95, 0.9, 1.0),
-    metallic: 0.0,
-    roughness: 0.0,
-    emissive: simd_float3(20, 20, 20) // Adjust intensity as needed
-)
 
 let lightWidth: Float = 1.5
 let lightDepth: Float = 1.5
@@ -58,17 +34,31 @@ let v1 = simd_float3(lightCenter.x + halfW, lightY, lightCenter.z - halfD)
 let v2 = simd_float3(lightCenter.x + halfW, lightY, lightCenter.z + halfD)
 let v3 = simd_float3(lightCenter.x - halfW, lightY, lightCenter.z + halfD)
 
+// Emissive material for the light triangles
+var lightMaterial = Material(
+    diffuse: simd_float4(1.0, 0.95, 0.9, 1.0),
+    metallic: 0.0,
+    roughness: 0.0,
+    emissive: simd_float3(1.0, 1.0, 1.0) // White light
+    // emissive: simd_float3(20, 20, 20) // Adjust intensity as needed
+)
+
 var squareLight = SquareLight(
     center: lightCenter,
     vertices: [v0, v1, v2, v3],
     material: lightMaterial,
-    LightType: .bulb(efficacy: 120, watts: 200), // Example values
+    LightType: .bulb(efficacy: 1.0, watts: 12), // Example values
+    // LightType: .bulb(efficacy: 150, watts: 200), // Example values
     width: lightWidth,
     depth: lightDepth
 )
-// squareLight.material.emissive = squareLight.emittedRadiance;
 
-// boxLight.material.emissive = boxLight.emittedRadiance // Use calculated radiance
+lightMaterial.emissive = squareLight.emittedRadiance
+squareLight.material = lightMaterial
+
+
+let cornellBoxTriangles = createCornellBoxScene()
+
 
 let width = Int(camera.resolution.x)
 let height = Int(camera.resolution.y)
@@ -201,8 +191,8 @@ func createCornellBoxScene() -> [Triangle] {
         rotationY: shortBoxRotationY
     )
     
-    triangles.append(contentsOf: createBoxTriangles(vertices: shortBoxVertices, material: specularBoxMaterial))
-    // triangles.append(contentsOf: createBoxTriangles(vertices: shortBoxVertices, material: diffuseBoxMaterial))
+    // triangles.append(contentsOf: createBoxTriangles(vertices: shortBoxVertices, material: specularBoxMaterial))
+    triangles.append(contentsOf: createBoxTriangles(vertices: shortBoxVertices, material: diffuseBoxMaterial))
 
     // // Create BoxLight for the ceiling
     // let ceilingLight = BoxLight(
@@ -245,14 +235,6 @@ func createCornellBoxScene() -> [Triangle] {
     let lightCenter = simd_float3(0, lightY, 0)
     let halfW: Float = lightWidth / 2
     let halfD: Float = lightHeight / 2
-
-    // have to define lightmaterial here as well
-    let lightMaterial = Material(
-        diffuse: simd_float4(1.0, 0.95, 0.9, 1.0),
-        metallic: 0.0,
-        roughness: 0.0,
-        emissive: simd_float3(20, 20, 20) // Adjust intensity as needed
-    )
 
     // Vertices for the two triangles (rectangle split into two)
     let v0 = simd_float3(lightCenter.x - halfW, lightY, lightCenter.z - halfD)
@@ -489,6 +471,7 @@ struct BoxLight {
         case .bulb(let efficacy, let watts):
             let luminousFlux = efficacy * watts // lm
             let radiantFlux = luminousFlux / 683.0 // Convert lumens to watts (assuming 555 nm peak sensitivity)
+            // let radiantFlux = Float(watts) // Convert lumens to watts (assuming 555 nm peak sensitivity)
             return calculateRadiance(radiantFlux: radiantFlux)
         case .radiometic(let radiantFlux):
             return calculateRadiance(radiantFlux: radiantFlux)
@@ -519,8 +502,7 @@ struct SquareLight {
     var emittedRadiance: simd_float3 {
         switch LightType {
         case .bulb(let efficacy, let watts):
-            let luminousFlux = efficacy * watts // lm
-            let radiantFlux = luminousFlux / 683.0 // Convert lumens to watts (assuming 555 nm peak sensitivity)
+            let radiantFlux = watts * 0.45 // lm
             return calculateRadiance(radiantFlux: radiantFlux)
         case .radiometic(let radiantFlux):
             return calculateRadiance(radiantFlux: radiantFlux)
@@ -592,74 +574,4 @@ struct Camera {
     var horizontalFov: Float // field of view in radians
     var ev100: Float = -1.0 // lower ev100 makes light brighter, doesnt seem to impact rest of scene
     
-    // func exposure() -> Float {
-    //     return 1.0 / pow(2.0, ev100 * 1.2)
-    // }
-    
-    // func generateRays() -> [Ray] {
-    //     var rays: [Ray] = []
-    //     let aspectRatio = Float(resolution.x / resolution.y)
-    //     let halfWidth = tan(horizontalFov / 2.0)
-    //     let halfHeight = halfWidth / aspectRatio
-        
-    //     // Create camera coordinate system
-    //     let w = -simd_normalize(direction)  // Forward vector
-    //     let u = simd_normalize(simd_cross(up, w))  // Right vector
-    //     let v = simd_normalize(simd_cross(w, u))  // Up vector (normalized)
-        
-    //     for y in 0..<resolution.y {
-    //         for x in 0..<resolution.x {
-    //             let s = (Float(x) / Float(resolution.x)) * 2.0 - 1.0
-    //             // Flip the t coordinate by negating it
-    //             let t = -((Float(y) / Float(resolution.y)) * 2.0 - 1.0)
-                
-    //             // Calculate ray direction in camera space
-    //             let dir = simd_float3(
-    //                 Float(s * halfWidth) * u +
-    //                 Float(t * halfHeight) * v -
-    //                 w
-    //             )
-    //             rays.append(Ray(origin: position, direction: simd_normalize(dir)))
-    //         }
-    //     }
-    //     return rays
-    // }
 }
-
-// struct Ray {
-//     var origin: simd_float3
-//     var direction: simd_float3    
-// }
-
-// func intersect(ray: Ray, sphere: Sphere) -> Intersection {
-//     let cent3 = simd_float3(sphere.center.x, sphere.center.y, sphere.center.z)
-//     let oc = ray.origin - cent3
-//     let a = simd_dot(ray.direction, ray.direction)
-//     let b = 2.0 * simd_dot(oc, ray.direction)
-//     let c = simd_dot(oc, oc) - Float(sphere.radius * sphere.radius)
-//     let discriminant = b * b - 4 * a * c
-
-//     if discriminant > 0 {
-//         let t1 = (-b - sqrt(discriminant)) / (2.0 * a)
-//         let t2 = (-b + sqrt(discriminant)) / (2.0 * a)
-//         if t1 > 0 || t2 > 0 {
-// //            let hitPoint = ray.origin + ray.direction * min(t1, t2)
-// //            let normal = simd_normalize(hitPoint - sphere.center)
-            
-//                 // Offset the hit point slightly along the normal to prevent self-intersection
-// //            let epsilon: Float = 1e-4
-//             // let offsetHitPoint = hitPoint + normal * epsilon
-//             return .hit
-//             // return .hit(point: offsetHitPoint, color: sphere.material.diffuse, material: sphere.material, ray: ray, normal: simd_normalize(hitPoint - sphere.center))
-//         }
-//     }
-//     return .miss
-// }
-
-// enum Intersection {
-//     // case hit(point: simd_float3, color: simd_float3, ray: Ray, normal: simd_float3)
-//     case hit
-//     case hitLight(point: simd_float3, color: simd_float3, radiance: simd_float3)
-//     case miss
-// }
-

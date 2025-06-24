@@ -64,6 +64,8 @@ typedef struct {
 typedef struct {
     simd_float3 origin;
     simd_float3 direction;
+    float minDistance;
+    float maxDistance;
 } RayGPU;
 
 typedef enum {
@@ -72,14 +74,13 @@ typedef enum {
     Miss
 } IntersectionTypeGPU;
 
-typedef struct {
-    IntersectionTypeGPU type;
-    simd_float3 point;
-    RayGPU ray;
-    simd_float3 normal;
-    MaterialGPU material;
-    simd_float3 radiance; // this is just for light - find better way to do intersections!
-} IntersectionGPU;
+// typedef struct {
+//     IntersectionTypeGPU type;
+//     simd_float3 point;
+//     ray ray;
+//     simd_float3 normal;
+//     MaterialGPU material;
+// } IntersectionGPU;
 
 typedef struct {
     simd_float3 direction;
