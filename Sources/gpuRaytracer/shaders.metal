@@ -11,183 +11,6 @@ using namespace metal;
 using namespace raytracing;
 #include "shaderTypes.h"
 
-// float3 recursiveMultiImportanceSampling(device const MaterialGPU* materials, SquareLightGPU light, 
-// device const float3* vertices, primitive_acceleration_structure accelerationStructure, uint2 index, 
-// IntersectionGPU incomingIntersection, uint samples, uint bounces) {
-//     uint samplesPerStrategy = samples / 3;
-//     // if (bounces == 1) {
-//     //     float3 lastBounceColor = float3(0.0, 0.0, 0.0);
-//     //     uint lastBounceSamples = 10;
-//     //     for (uint i = 0; i < lastBounceSamples; i++) {
-//     //         uint pow2 = nextPowerOfTwo(lastBounceSamples);
-//     //         float2 randomPoints = hammersley2D(i, pow2);
-//     //         lastBounceColor += calculateLastBounce(materials, light, vertices, accelerationStructure, 
-//     //         incomingIntersection, randomPoints);
-//     //     }
-//     //     return lastBounceColor / lastBounceSamples; // last bounce only do light sampling
-//     // }
-//     if (bounces == 0) {
-//         return float3(0.0, 0.0, 0.0); // no bounces left, return black
-//     }
-
-//     float3 sampledColor = float3(0.0, 0.0, 0.0);
-//     float3 bounceAccumulatedColor = float3(0.0, 0.0, 0.0);
-
-//     // direct light sampling
-//     for (uint i = 0; i < samplesPerStrategy; i++) {
-//         // generate random points for sampling
-//         uint pow2 = nextPowerOfTwo(samplesPerStrategy);
-//         float2 u = hammersley2D(i, pow2);
-//         SampleResultGPU lightSample = sampleSquareLight(light, incomingIntersection.point, u);
-
-//         // Calculate PDFs for other strategies
-//         float cosineWeightedPdf = calculateCosineWeightedPdf(incomingIntersection.normal, lightSample.direction);
-//         float vndfPdf = calculateVNDFPdf(-incomingIntersection.ray.direction, incomingIntersection.normal, 
-//         lightSample.direction, incomingIntersection.material.roughness);
-//         // check shadow ray to see if the light is visible
-//         ray shadowRay;
-//         shadowRay.origin = incomingIntersection.point + incomingIntersection.normal * 1e-4; 
-//         shadowRay.direction = lightSample.direction;
-//         shadowRay.min_distance = incomingIntersection.ray.min_distance;
-//         shadowRay.max_distance = incomingIntersection.ray.max_distance;
-//         IntersectionGPU shadowIntersection = getClosestIntersection(accelerationStructure, materials, vertices, 
-//         shadowRay);
-
-//         if (shadowIntersection.type == HitLight) {
-//             float weight = powerHeuristic(lightSample.pdf, cosineWeightedPdf, vndfPdf); // might have to hard code beta
-//             float3 brdfContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.point, 
-//             incomingIntersection.normal, incomingIntersection.material, lightSample.direction, 
-//             shadowIntersection.material.emissive);
-//             sampledColor += brdfContribution * weight / lightSample.pdf; // add weighted contribution / pdf
-//             // if (bounces == 1) {
-//             //     return sampledColor / float(samplesPerStrategy);
-//             // }
-//         }
-//     }
-
-//     uint(brdfSamples) = samplesPerStrategy * 2;
-//     for (uint i = 0; i < brdfSamples; i++) {
-//         // generate random points for sampling
-//         uint pow2 = nextPowerOfTwo(samplesPerStrategy);
-//         float2 u = hammersley2D(i + samplesPerStrategy, pow2);
-
-//         // --- Determine Probability using Fresnel ---
-//         float3 v = -normalize(incomingIntersection.ray.direction);
-//         float NoV = abs(dot(incomingIntersection.normal, v)) + 1e-5;
-//         float3 dielectricF0 = float3(0.04);
-//         float3 f0 = mix(dielectricF0, incomingIntersection.material.diffuse.rgb, incomingIntersection.material.metallic);
-//         float3 F = F_Schlick(NoV, f0);
-//         float specularProbability = clamp((F.x + F.y + F.z) / 3.0, 0.05, 0.95); // Clamp to avoid division by zero
-        
-//         if (u.x >= specularProbability) {
-//             SampleResultGPU cosineSample = sampleCosineWeighted(incomingIntersection.normal, u);
-//             // calc pdfs for other strats
-//             float lightPdf = calculateSquareLightPdf(light, incomingIntersection.point, cosineSample.direction);
-//             float vndfPdf = calculateVNDFPdf(-incomingIntersection.ray.direction, incomingIntersection.normal,
-//             cosineSample.direction, incomingIntersection.material.roughness);
-
-//             //check shadowray
-//             ray shadowRay;
-//             shadowRay.origin = incomingIntersection.point + incomingIntersection.normal * 1e-4; 
-//             shadowRay.direction = cosineSample.direction;
-//             shadowRay.min_distance = incomingIntersection.ray.min_distance;
-//             shadowRay.max_distance = incomingIntersection.ray.max_distance;
-//             IntersectionGPU shadowIntersection = getClosestIntersection(accelerationStructure, materials, vertices, 
-//             shadowRay);
-//             float weight = powerHeuristic(cosineSample.pdf, lightPdf, vndfPdf);
-//             float3 brdfContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.point,
-//             incomingIntersection.normal, incomingIntersection.material, cosineSample.direction,
-//             shadowIntersection.material.emissive);
-//             if (shadowIntersection.type == HitLight) {
-//                 sampledColor += brdfContribution * weight / cosineSample.pdf;
-//             }
-//             // check if we should bounce
-//             if (bounces > 1) {
-//                 // make new ray and intersection for recursion
-//                 ray bounceRay;
-//                 bounceRay.origin = incomingIntersection.point + incomingIntersection.normal * 1e-4;
-//                 bounceRay.direction = cosineSample.direction;
-//                 bounceRay.min_distance = incomingIntersection.ray.min_distance;
-//                 bounceRay.max_distance = incomingIntersection.ray.max_distance;
-
-//                 IntersectionGPU bounceIntersection = getClosestIntersection(accelerationStructure, materials, vertices, bounceRay);
-
-//                 if (bounceIntersection.type == Miss) {
-//                     continue;
-//                 } else if (bounceIntersection.type == HitLight) {
-//                     continue;
-//                     // do we add light here? maybe divided by pdf or times some weight???
-//                     // bounceAccumulatedColor += bounceIntersection.material.emissive * bounceIntersection.material.diffuse.rgb;
-//                 } else {
-//                     // recursive call
-//                     float3 bounceColor = recursiveMultiImportanceSampling(materials, light, vertices, accelerationStructure,
-//                     index, bounceIntersection, 10, bounces - 1);
-//                     bounceAccumulatedColor += bounceColor;
-//                     // bounceAccumulatedColor += bounceColor * cosineSample.pdf;
-//                     // bounceAccumulatedColor += (weight / cosineSample.pdf) * bounceColor / (1.0 - specularProbability);
-//                 }
-//             }
-
-//         } else {
-//             SampleResultGPU vndfSample = sampleVNDF(-incomingIntersection.ray.direction, incomingIntersection.normal,
-//             incomingIntersection.material.roughness, u);
-
-//             // calc pdfs for other strats
-//             float lightPdf = calculateSquareLightPdf(light, incomingIntersection.point, vndfSample.direction);
-//             float cosineWeightedPdf = calculateCosineWeightedPdf(incomingIntersection.normal, vndfSample.direction);
-//             // check shadow ray
-//             ray shadowRay;
-//             shadowRay.origin = incomingIntersection.point + incomingIntersection.normal * 1e-4; 
-//             shadowRay.direction = vndfSample.direction;
-//             shadowRay.min_distance = incomingIntersection.ray.min_distance;
-//             shadowRay.max_distance = incomingIntersection.ray.max_distance;
-//             IntersectionGPU shadowIntersection = getClosestIntersection(accelerationStructure, materials, vertices, 
-//             shadowRay);
-//             float weight = powerHeuristic(vndfSample.pdf, lightPdf, cosineWeightedPdf);
-//             float3 brdfContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.point,
-//                 incomingIntersection.normal, incomingIntersection.material, vndfSample.direction,
-//                 shadowIntersection.material.emissive);
-            
-//             if (shadowIntersection.type == HitLight) {
-//                 // if (bounces == 1) {
-//                 //     weight = twoStrategyPowerHeuristic(vndfSample.pdf, cosineWeightedPdf);
-//                 //     sampledColor += brdfContribution * weight / vndfSample.pdf; 
-//                 // } else {
-//                 //     sampledColor += brdfContribution * weight / vndfSample.pdf; 
-//                 // }
-//                 sampledColor += brdfContribution * weight / vndfSample.pdf; 
-
-//             }
-//             if (bounces > 1) {
-//                 ray bounceRay;
-//                 bounceRay.origin = incomingIntersection.point + incomingIntersection.normal * 1e-4;
-//                 bounceRay.direction = vndfSample.direction;
-//                 bounceRay.min_distance = incomingIntersection.ray.min_distance;
-//                 bounceRay.max_distance = incomingIntersection.ray.max_distance;
-//                 IntersectionGPU bounceIntersection = getClosestIntersection(accelerationStructure, materials, vertices, bounceRay);
-
-//                 if (bounceIntersection.type == Miss) {
-//                     continue;
-//                 } else if (bounceIntersection.type == HitLight) {
-//                     continue;
-//                 } else {
-//                     // recursive call
-//                     float3 bounceColor = recursiveMultiImportanceSampling(materials, light, vertices, accelerationStructure,
-//                     index, bounceIntersection, 10, bounces - 1);
-//                     bounceAccumulatedColor += bounceColor;
-//                     // bounceAccumulatedColor += bounceColor * vndfSample.pdf;
-//                     // bounceAccumulatedColor += (weight / vndfSample.pdf) * bounceColor / specularProbability;
-//                 }
-//             }
-//         }
-//     }
-
-//     sampledColor /= float(samplesPerStrategy * 3); // average the sampled color
-//     bounceAccumulatedColor /= float(samplesPerStrategy * 2); // average the bounced color
-//     return sampledColor + bounceAccumulatedColor; // combine direct and bounced contributions
-
-// }
-
 typedef struct {
     IntersectionTypeGPU type;
     float3 point;
@@ -239,8 +62,10 @@ float2 hashRandom(uint2 index, uint i) {
     // TODO: add camera to func so we can pull screen width easier
     uint sampleId = (index.y * 800 + index.x) * i; // Assuming 800 is the width of the image
     
-    uint seed1 = hash(index.x + index.y * 800 + sampleId * 1600);
-    uint seed2 = hash(index.y + index.x * 600 + sampleId * 3200 + 12345);
+    // uint seed1 = hash(index.x + index.y * 800 + sampleId * 1600);
+    // uint seed2 = hash(index.y + index.x * 600 + sampleId * 3200 + 12345);
+    uint seed1 = hash(index.x + index.y * 800 + sampleId );
+    uint seed2 = hash(index.y + index.x * 600 + sampleId + 12345);
     
     // Generate two random floats
     float u1 = randomFloat(seed1);
@@ -372,8 +197,11 @@ float Fd_Lambert() {
     return 1.0 / M_PI_F;
 }
 
-ray generateCameraRay(CameraGPU camera, uint2 index) {
+ray generateCameraRay(CameraGPU camera, uint2 index, float2 pixelJitter) {
     // pixel/screen coordinates
+    // look into temporal accumulation, use frame counter to accumulate results over time
+    //store the running average in separate buffer and blend result with accumulated.
+
     int x = index.x;
     int y = index.y;
     float aspectRatio = float(camera.resolution.x / camera.resolution.y);
@@ -385,8 +213,10 @@ ray generateCameraRay(CameraGPU camera, uint2 index) {
     float3 u = normalize(cross(camera.up, w));
     float3 v = normalize(cross(w, u));
     
-    float s = (float(x) / float(camera.resolution.x)) * 2.0 - 1.0;
-    float t = -((float(y) / float(camera.resolution.y)) * 2.0 - 1.0);
+    float s = ((float(x) + pixelJitter.x) / float(camera.resolution.x)) * 2.0 - 1.0;
+    float t = -(((float(y) + pixelJitter.y) / float(camera.resolution.y)) * 2.0 - 1.0);
+    // float s = (float(x) / float(camera.resolution.x)) * 2.0 - 1.0;
+    // float t = -((float(y) / float(camera.resolution.y)) * 2.0 - 1.0);
 
     // dir to pixel
     float3 dir = normalize(s * halfWidth * u + t * halfHeight * v - w);
@@ -637,16 +467,21 @@ device const MaterialGPU* materials, device const float3* vertices, ray incoming
     }
 }
 
-// bool checkShadowRay(device const MaterialGPU* materials, SquareLightGPU light, device const float3* vertices, primitive_acceleration_structure accelerationStructure, uint2 index, 
-// IntersectionGPU incomingIntersection, float2 randomPoints) {
-//     ray shadowRay = directSquareLightRay(incomingIntersection.point, light, randomPoints);
-//     IntersectionGPU shadowIntersection = getClosestIntersection(accelerationStructure, materials, vertices,
-//     shadowRay);
-//     if (shadowIntersection.type == HitLight) {
-//         return true;
-//     }
-//     return false; 
-// }
+float3 calculateDirectLightSamplingContribution(device const MaterialGPU* materials, SquareLightGPU light,
+device const float3* vertices, primitive_acceleration_structure accelerationStructure, uint2 index,
+IntersectionGPU incomingIntersection, float2 randomPoints) {
+    float3 directLight = float3(0.0, 0.0, 0.0);
+    ray lightRay = directSquareLightRay(incomingIntersection.point + incomingIntersection.normal * 1e-4, light, randomPoints);
+    float3 directLightPDF = calculateSquareLightPdf(incomingIntersection.point, light, lightRay.direction);
+
+    IntersectionGPU lightIntersection = getClosestIntersection(accelerationStructure, materials, vertices, 
+    lightRay);
+    if (lightIntersection.type == HitLight) {
+        float3 brdfContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.normal, incomingIntersection.material, lightRay.direction);
+        directLight += brdfContribution * lightIntersection.material.emissive / directLightPDF;
+    }
+    return directLight;
+}
 
 float3 recursiveMultiImportanceSampling(device const MaterialGPU* materials, SquareLightGPU light, 
 device const float3* vertices, primitive_acceleration_structure accelerationStructure, uint2 index, 
@@ -661,17 +496,8 @@ IntersectionGPU incomingIntersection, uint samples, uint bounces, float3 through
     for (uint i = 0; i < samplesPerStrategy; i++) {
         // generate random points for sampling
         float2 u = hashRandom(index, i);
+        directLight += calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, incomingIntersection, u);
 
-        ray lightRay = directSquareLightRay(incomingIntersection.point + incomingIntersection.normal * 1e-4, light, u);
-        float3 directLightPDF = calculateSquareLightPdf(incomingIntersection.point, light, lightRay.direction);
-
-        IntersectionGPU lightIntersection = getClosestIntersection(accelerationStructure, materials, vertices, 
-        lightRay);
-        if (lightIntersection.type == HitLight) {
-            float3 brdfContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.normal, incomingIntersection.material, lightRay.direction);
-
-            directLight += brdfContribution * lightIntersection.material.emissive / directLightPDF;
-        }
     }
     // cosine-weighted hemisphere sampling
     for (uint i = 0; i < samplesPerStrategy; i++) {
@@ -686,16 +512,7 @@ IntersectionGPU incomingIntersection, uint samples, uint bounces, float3 through
         if (cosineIntersection.type == HitLight) {
             cosine += brdfContribution * cosineIntersection.material.emissive / cosinePDF;
         } else if (cosineIntersection.type == Hit) {
-            ray lightRay2 = directSquareLightRay(cosineIntersection.point + cosineIntersection.normal * 1e-4, light, u);
-            float3 directLightPDF2 = calculateSquareLightPdf(cosineIntersection.point, light, lightRay2.direction);
-
-            IntersectionGPU lightIntersection2 = getClosestIntersection(accelerationStructure, materials, vertices, 
-            lightRay2);
-            if (lightIntersection2.type == HitLight) {
-                float3 brdfContribution2 = calculateBRDFContribution(cosineIntersection.ray, cosineIntersection.normal, cosineIntersection.material, lightRay2.direction);
-                float3 bounceLight = brdfContribution2 * lightIntersection2.material.emissive / directLightPDF2;
-                cosine += brdfContribution * bounceLight / cosinePDF;
-            }
+            cosine += brdfContribution / cosinePDF * calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, cosineIntersection, u);
         }
     }
     // VNDF sampling
@@ -708,23 +525,11 @@ IntersectionGPU incomingIntersection, uint samples, uint bounces, float3 through
 
         IntersectionGPU vndfIntersection = getClosestIntersection(accelerationStructure, materials, vertices, 
         lightRay);
-        
+        float3 brdfContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.normal, incomingIntersection.material, lightRay.direction);
         if (vndfIntersection.type == HitLight) {
-            float3 brdfContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.normal, incomingIntersection.material, lightRay.direction);
             vndf += brdfContribution * vndfIntersection.material.emissive / vndfPDF; 
         } else if (vndfIntersection.type == Hit) {
-            ray lightRay2 = directSquareLightRay(vndfIntersection.point + vndfIntersection.normal * 1e-4, light, u);
-            float3 directLightPDF2 = calculateSquareLightPdf(vndfIntersection.point, light, lightRay2.direction);
-
-            IntersectionGPU lightIntersection2 = getClosestIntersection(accelerationStructure, materials, vertices, 
-            lightRay2);
-            if (lightIntersection2.type == HitLight) {
-                float3 brdfContribution2 = calculateBRDFContribution(vndfIntersection.ray, vndfIntersection.normal, vndfIntersection.material, lightRay2.direction);
-                float3 bounceLight = brdfContribution2 * lightIntersection2.material.emissive / directLightPDF2;
-
-                float3 bounceContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.normal, incomingIntersection.material, lightRay.direction);
-                vndf += bounceContribution * bounceLight / vndfPDF;
-            }
+            vndf += brdfContribution / vndfPDF * calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, vndfIntersection, u);
         }
     }
     return (directLight + cosine + vndf) / float(samplesPerStrategy * 3); // combine all contributions
@@ -738,30 +543,45 @@ primitive_acceleration_structure accelerationStructure [[buffer(5)]], uint2 inde
     // check if index is within camera resolution bounds
     if (int(index.x) >= camera.resolution.x || int(index.y) >= camera.resolution.y) return;
 
-    // gen intial ray
-    ray r = generateCameraRay(camera, index);
-    uint samples = 999;
+    uint cameraRaysPerPixel = 3;
+    float3 accumulatedColor = float3(0.0, 0.0, 0.0);
+
+    // ray r = generateCameraRay(camera, index, jitter);
+    uint misSamples = 999;
     uint bounces = 2;
 
-    // handle camera ray intersection
-    IntersectionGPU intersection = getClosestIntersection(accelerationStructure, materials, vertices, r);
-    float4 finalColor = float4(0.0, 0.0, 0.0, 1.0);
-    // float3 col = (8 + intersection.point.y) / 14.0; // just for testing, remove later
-    // float4 finalColor = float4(col, 1.0); // just for testing, remove later
-    // float4 finalColor = float4(col, 1.0); // just for testing, remove later
 
-    if (intersection.type == Miss) {
-        // no intersection leave color black.
-    } else if (intersection.type == HitLight) {
-        // hit light, set pixel to light color
-        float3 lightColor = intersection.material.emissive;
-        finalColor = reinhartToneMapping(lightColor * cameraExposure(camera));
-    } else {
-        // hit geometry, recursive ray trace
-        float3 sampledColor = recursiveMultiImportanceSampling(materials, light, vertices, accelerationStructure, 
-        index, intersection, samples, bounces);
-        finalColor = reinhartToneMapping(sampledColor * cameraExposure(camera));
+    for (uint i = 0; i < cameraRaysPerPixel; i++) {
+        //get jitter values
+        // float2 pixelJitter = hashRandom(index, i);
+        float2 pixelJitter = hammersley2D(i + 1 * cameraRaysPerPixel, cameraRaysPerPixel);
+
+        // gen intial ray
+        ray r = generateCameraRay(camera, index, pixelJitter);
+
+        // handle camera ray intersection
+        IntersectionGPU intersection = getClosestIntersection(accelerationStructure, materials, vertices, r);
+        // float4 finalColor = float4(0.0, 0.0, 0.0, 1.0);
+        // float3 col = (8 + intersection.point.y) / 14.0; // just for testing, remove later
+        // float4 finalColor = float4(col, 1.0); // just for testing, remove later
+        // float4 finalColor = float4(col, 1.0); // just for testing, remove later
+
+        if (intersection.type == Miss) {
+            // no intersection leave color black.
+        } else if (intersection.type == HitLight) {
+            // hit light, set pixel to light color
+            float3 lightColor = intersection.material.emissive;
+            accumulatedColor += lightColor;
+            // finalColor = reinhartToneMapping(lightColor * cameraExposure(camera));
+        } else {
+            // hit geometry, recursive ray trace
+            float3 sampledColor = recursiveMultiImportanceSampling(materials, light, vertices, accelerationStructure, 
+            index, intersection, misSamples, bounces);
+            accumulatedColor += sampledColor;
+            // finalColor = reinhartToneMapping(sampledColor * cameraExposure(camera));
+        }
     }
+    float4 finalColor = reinhartToneMapping(accumulatedColor / float(cameraRaysPerPixel) * cameraExposure(camera));
+    
     writeToPixelBuffer(pixels, camera, index, finalColor);
-
 }
