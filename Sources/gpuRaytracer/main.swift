@@ -47,7 +47,7 @@ var squareLight = SquareLight(
     center: lightCenter,
     vertices: [v0, v1, v2, v3],
     material: lightMaterial,
-    LightType: .bulb(efficacy: 1.0, watts: 12), // Example values
+    LightType: .bulb(efficacy: 1.0, watts: 30), // Example values
     // LightType: .bulb(efficacy: 150, watts: 200), // Example values
     width: lightWidth,
     depth: lightDepth
@@ -92,11 +92,11 @@ func createCornellBoxScene() -> [Triangle] {
     let half = roomSize / 2.0
     
     // Materials for Cornell Box
-    let redMaterial = Material(diffuse: simd_float4(0.9, 0.0, 0.0, 1), metallic: 0.3, roughness: 0.6)    // Left wall
-    let greenMaterial = Material(diffuse: simd_float4(0.0, 0.7, 0.0, 1), metallic: 0.3, roughness: 0.6)  // Right wall
-    let whiteMaterial = Material(diffuse: simd_float4(0.9, 0.9, 0.9, 1), metallic: 0.3, roughness: 0.6)  // Other walls
-    let diffuseBoxMaterial = Material(diffuse: simd_float4(0.9, 0.9, 0.9, 1), metallic: 0.1, roughness: 0.8)  
-    let specularBoxMaterial = Material(diffuse: simd_float4(0.9, 0.9, 0.9, 1), metallic: 0.9, roughness: 0.1)  
+    let redMaterial = Material(diffuse: simd_float4(0.9, 0.0, 0.0, 1), metallic: 0.05, roughness: 0.3)    // Left wall
+    let greenMaterial = Material(diffuse: simd_float4(0.0, 0.7, 0.0, 1), metallic: 0.05, roughness: 0.8)  // Right wall
+    let whiteMaterial = Material(diffuse: simd_float4(0.9, 0.9, 0.9, 1), metallic: 0.05, roughness: 0.8)  // Other walls
+    let diffuseBoxMaterial = Material(diffuse: simd_float4(0.9, 0.9, 0.9, 1), metallic: 0.05, roughness: 0.3)  
+    let specularBoxMaterial = Material(diffuse: simd_float4(0.9, 0.9, 0.9, 1), metallic: 0.9, roughness: 0.3)  
     // let blueMaterial = Material(diffuse: simd_float4(0.25, 0.25, 0.75, 1), metallic: 0.3, roughness: 0.6)   // Tall box
     // let yellowMaterial = Material(diffuse: simd_float4(0.75, 0.75, 0.25, 1), metallic: 0.3, roughness: 0.6) // Short cube
     
@@ -164,7 +164,7 @@ func createCornellBoxScene() -> [Triangle] {
     let tallBoxWidth: Float = 1.2
     let tallBoxHeight: Float = 2.8
     let tallBoxDepth: Float = 1.2
-    let tallBoxPosition = simd_float3(-1, -half + tallBoxHeight/2 + 0.01, -1.5) // Back left
+    let tallBoxPosition = simd_float3(-1, -half + tallBoxHeight/2 - 0.05, -1.5) // Back left
     let tallBoxRotationY: Float = Float.pi / 2.4 
     
     let tallBoxVertices = createRotatedBoxVertices(
@@ -174,13 +174,13 @@ func createCornellBoxScene() -> [Triangle] {
         depth: tallBoxDepth,
         rotationY: tallBoxRotationY
     )
-    
+    // triangles.append(contentsOf: createBoxTriangles(vertices: tallBoxVertices, material: specularBoxMaterial))
     triangles.append(contentsOf: createBoxTriangles(vertices: tallBoxVertices, material: diffuseBoxMaterial))
     
     // front cube
     let shortBoxSize: Float = 1.2
     let shortBoxHeight: Float = 1.2
-    let shortBoxPosition = simd_float3(0.7, -half + shortBoxHeight/2 + 0.01, 1.2) // Front right
+    let shortBoxPosition = simd_float3(0.7, -half + shortBoxHeight/2 - 0.05, 1.2) // Front right
     let shortBoxRotationY: Float = -Float.pi / 2.5 
     
     let shortBoxVertices = createRotatedBoxVertices(
