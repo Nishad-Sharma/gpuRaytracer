@@ -47,7 +47,7 @@ var squareLight = SquareLight(
     center: lightCenter,
     vertices: [v0, v1, v2, v3],
     material: lightMaterial,
-    LightType: .bulb(efficacy: 1.0, watts: 30), // Example values
+    LightType: .bulb(efficacy: 100.0, watts: 30), // Example values
     // LightType: .bulb(efficacy: 150, watts: 200), // Example values
     width: lightWidth,
     depth: lightDepth
@@ -502,7 +502,10 @@ struct SquareLight {
     var emittedRadiance: simd_float3 {
         switch LightType {
         case .bulb(let efficacy, let watts):
-            let radiantFlux = watts * 0.45 // lm
+            // 1. Calculate total lumens
+            let luminousFlux = efficacy * watts // lm
+            // 2. Convert lumens to radiant flux (Watts)
+            let radiantFlux = luminousFlux / 683.0
             return calculateRadiance(radiantFlux: radiantFlux)
         case .radiometic(let radiantFlux):
             return calculateRadiance(radiantFlux: radiantFlux)
@@ -515,7 +518,7 @@ struct SquareLight {
         // For Lambertian emitter: radiance = exitance / π
         let radiance = radiantExitance / Float.pi // W/(sr·m²)
         
-        return simd_float3(material.diffuse.x, material.diffuse.y, material.diffuse.z) * radiance
+        return material.emissive * radiance
     }
 }
 
@@ -572,6 +575,6 @@ struct Camera {
     var up: simd_float3 = simd_float3(0, 1, 0) // assuming camera's up vector is positive y-axis
     var resolution: simd_int2
     var horizontalFov: Float // field of view in radians
-    var ev100: Float = -1.0 // lower ev100 makes light brighter, doesnt seem to impact rest of scene
+    var ev100: Float = 4.0 // lower ev100 makes light brighter, doesnt seem to impact rest of scene
     
 }

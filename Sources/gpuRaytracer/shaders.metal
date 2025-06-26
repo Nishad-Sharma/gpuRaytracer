@@ -28,6 +28,7 @@ constant unsigned int primes[] = {
     73, 79, 83, 89
 };
 
+// index i, dimension d.
 float halton(unsigned int i, unsigned int d) {
     unsigned int b = primes[d];
 
@@ -43,6 +44,15 @@ float halton(unsigned int i, unsigned int d) {
     }
 
     return r;
+}
+
+float2 haltonRandom(uint i, uint d) {
+    // Generate two independent Halton sequences
+    float u1 = halton(i, 0 + d); // First dimension
+    float u2 = halton(i, 1 + d); // Second dimension
+
+    // Return as a 2D vector
+    return float2(u1, u2);
 }
 
 uint hash(uint x) {
@@ -119,9 +129,10 @@ float hammersleyFloat(uint index, uint dimension, uint totalSamples) {
 }
 
 // Power heuristic for MIS
-float powerHeuristic(float pdf1, float pdf2, float pdf3, float beta = 2.0) {
-    float p1 = pow(pdf1, beta);
-    float sum = p1 + pow(pdf2, beta) + pow(pdf3, beta);
+float powerHeuristic(float pdf1, float pdf2, float pdf3, uint samplesPerStrategy, float beta = 2.0) {
+    float n = float(samplesPerStrategy);
+    float p1 = pow(n * pdf1, beta);
+    float sum = p1 + pow(n * pdf2, beta) + pow(n * pdf3, beta);
     return p1 / (sum + 1e-6);  // epsilon to avoid division by zero
 }
 
@@ -132,7 +143,8 @@ float twoStrategyPowerHeuristic(float pdf1, float pdf2, float beta = 2.0) {
 
 // TODO: figure out which one is better
 float cameraExposure(CameraGPU camera) {
-    return 1.0 / pow(2.0, camera.ev100 * 1.2);
+    float maxLuminance = 1.2 * pow(2.0, camera.ev100);
+    return 1.0 / maxLuminance;
     // return 1.0 / (78.0 * pow(2.0, camera.ev100));
 }
 
@@ -213,10 +225,10 @@ ray generateCameraRay(CameraGPU camera, uint2 index, float2 pixelJitter) {
     float3 u = normalize(cross(camera.up, w));
     float3 v = normalize(cross(w, u));
     
-    float s = ((float(x) + pixelJitter.x) / float(camera.resolution.x)) * 2.0 - 1.0;
-    float t = -(((float(y) + pixelJitter.y) / float(camera.resolution.y)) * 2.0 - 1.0);
-    // float s = (float(x) / float(camera.resolution.x)) * 2.0 - 1.0;
-    // float t = -((float(y) / float(camera.resolution.y)) * 2.0 - 1.0);
+    // float s = ((float(x) + pixelJitter.x) / float(camera.resolution.x)) * 2.0 - 1.0;
+    // float t = -(((float(y) + pixelJitter.y) / float(camera.resolution.y)) * 2.0 - 1.0);
+    float s = (float(x) / float(camera.resolution.x)) * 2.0 - 1.0;
+    float t = -((float(y) / float(camera.resolution.y)) * 2.0 - 1.0);
 
     // dir to pixel
     float3 dir = normalize(s * halfWidth * u + t * halfHeight * v - w);
@@ -467,18 +479,34 @@ device const MaterialGPU* materials, device const float3* vertices, ray incoming
     }
 }
 
+float balancedHeuristic(float pdf1, float pdf2, float pdf3) {
+    // Balanced heuristic for three strategies
+    if (pdf1 == 0.0) return 0.0;
+    float sum = pdf1 + pdf2 + pdf3;
+    return pdf1 / sum;
+}
+
+
 float3 calculateDirectLightSamplingContribution(device const MaterialGPU* materials, SquareLightGPU light,
 device const float3* vertices, primitive_acceleration_structure accelerationStructure, uint2 index,
-IntersectionGPU incomingIntersection, float2 randomPoints) {
+IntersectionGPU incomingIntersection, float2 randomPoints, uint samplesPerStrategy, bool usePowerHeuristic = true) {
     float3 directLight = float3(0.0, 0.0, 0.0);
     ray lightRay = directSquareLightRay(incomingIntersection.point + incomingIntersection.normal * 1e-4, light, randomPoints);
-    float3 directLightPDF = calculateSquareLightPdf(incomingIntersection.point, light, lightRay.direction);
+    float directLightPDF = calculateSquareLightPdf(incomingIntersection.point, light, lightRay.direction);
+    float cosinePDF = calculateCosineWeightedPdf(incomingIntersection.normal, lightRay.direction);
+    float vndfPDF = calculateVNDFPdf(-incomingIntersection.ray.direction, incomingIntersection.normal, lightRay.direction, incomingIntersection.material.roughness);
 
     IntersectionGPU lightIntersection = getClosestIntersection(accelerationStructure, materials, vertices, 
     lightRay);
     if (lightIntersection.type == HitLight) {
         float3 brdfContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.normal, incomingIntersection.material, lightRay.direction);
-        directLight += brdfContribution * lightIntersection.material.emissive / directLightPDF;
+        if (usePowerHeuristic) {
+            // float weight = balancedHeuristic(directLightPDF, cosinePDF, vndfPDF);
+            float weight = powerHeuristic(directLightPDF, cosinePDF, vndfPDF, samplesPerStrategy, 1.0);
+            directLight += weight * brdfContribution * lightIntersection.material.emissive / directLightPDF;
+        } else {
+            directLight += brdfContribution * lightIntersection.material.emissive / directLightPDF;
+        }
     }
     return directLight;
 }
@@ -496,43 +524,68 @@ IntersectionGPU incomingIntersection, uint samples, uint bounces, float3 through
     for (uint i = 0; i < samplesPerStrategy; i++) {
         // generate random points for sampling
         float2 u = hashRandom(index, i);
-        directLight += calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, incomingIntersection, u);
+        // float2 u = haltonRandom(i, 0);
+        // float2 u = haltonRandom(index.y * 800 + index.x + i, 0);
+        directLight += calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, incomingIntersection, u, samplesPerStrategy);
 
     }
     // cosine-weighted hemisphere sampling
     for (uint i = 0; i < samplesPerStrategy; i++) {
         float2 u = hashRandom(index, i);
+        // float2 u = haltonRandom(i + samplesPerStrategy, 2);
+        // float2 u = haltonRandom(index.y * 800 + index.x + i + samplesPerStrategy, 2);
+
         // generate cosine-weighted ray using random points
         ray lightRay = cosineWeightedRay(incomingIntersection.point + incomingIntersection.normal * 1e-4, incomingIntersection.normal, u);
-        float3 cosinePDF = calculateCosineWeightedPdf(incomingIntersection.normal, lightRay.direction);
+        float cosinePDF = calculateCosineWeightedPdf(incomingIntersection.normal, lightRay.direction);
+        float directLightPDF = calculateSquareLightPdf(incomingIntersection.point, light, lightRay.direction);
+        float vndfPDF = calculateVNDFPdf(-incomingIntersection.ray.direction, incomingIntersection.normal, lightRay.direction, incomingIntersection.material.roughness);
+
+        // float weight = balancedHeuristic(cosinePDF, directLightPDF, vndfPDF);
+        float weight = powerHeuristic(cosinePDF, directLightPDF, vndfPDF, samplesPerStrategy, 1.0);
 
         IntersectionGPU cosineIntersection = getClosestIntersection(accelerationStructure, materials, vertices,
         lightRay);
         float3 brdfContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.normal, incomingIntersection.material, lightRay.direction);
         if (cosineIntersection.type == HitLight) {
-            cosine += brdfContribution * cosineIntersection.material.emissive / cosinePDF;
+            // cosine += brdfContribution * cosineIntersection.material.emissive / cosinePDF;
+            cosine += weight * brdfContribution * cosineIntersection.material.emissive / cosinePDF;
         } else if (cosineIntersection.type == Hit) {
-            cosine += brdfContribution / cosinePDF * calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, cosineIntersection, u);
+            // float2 u2 = haltonRandom(i + samplesPerStrategy, 6);
+            // float2 u2 = haltonRandom(index.y * 800 + index.x + i, 6);
+
+            cosine += brdfContribution / cosinePDF * calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, cosineIntersection, u, 1, false);
         }
     }
     // VNDF sampling
     for (uint i = 0; i < samplesPerStrategy; i++) {
         float2 u = hashRandom(index, i);
+        // float2 u = haltonRandom(i + 2 * samplesPerStrategy, 4);
+        // float2 u = haltonRandom(index.y * 800 + index.x + i + 2 * samplesPerStrategy, 4);
+
         ray lightRay = vndfRay(incomingIntersection.point + incomingIntersection.normal * 1e-4, -incomingIntersection.ray.direction,
         incomingIntersection.normal, incomingIntersection.material.roughness, u);
-        float3 vndfPDF = calculateVNDFPdf(-incomingIntersection.ray.direction, incomingIntersection.normal,
+        float vndfPDF = calculateVNDFPdf(-incomingIntersection.ray.direction, incomingIntersection.normal,
         lightRay.direction, incomingIntersection.material.roughness);
+        float cosinePDF = calculateCosineWeightedPdf(incomingIntersection.normal, lightRay.direction);
+        float directLightPDF = calculateSquareLightPdf(incomingIntersection.point, light, lightRay.direction);
+        // float weight = balancedHeuristic(vndfPDF, cosinePDF, directLightPDF);
+        float weight = powerHeuristic(vndfPDF, directLightPDF, cosinePDF, samplesPerStrategy, 1.0);
 
         IntersectionGPU vndfIntersection = getClosestIntersection(accelerationStructure, materials, vertices, 
         lightRay);
         float3 brdfContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.normal, incomingIntersection.material, lightRay.direction);
         if (vndfIntersection.type == HitLight) {
-            vndf += brdfContribution * vndfIntersection.material.emissive / vndfPDF; 
+            // vndf += brdfContribution * vndfIntersection.material.emissive / vndfPDF; 
+            vndf += weight * brdfContribution * vndfIntersection.material.emissive / vndfPDF; 
         } else if (vndfIntersection.type == Hit) {
-            vndf += brdfContribution / vndfPDF * calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, vndfIntersection, u);
+            // float2 u2 = haltonRandom(i + 2 * samplesPerStrategy, 6);
+            // float2 u2 = haltonRandom(index.y * 800 + index.x + i, 6);
+
+            vndf += brdfContribution / vndfPDF * calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, vndfIntersection, u, 1, false);
         }
     }
-    return (directLight + cosine + vndf) / float(samplesPerStrategy * 3); // combine all contributions
+    return (directLight + cosine + vndf) / float(samplesPerStrategy); // combine all contributions
 }
 
 kernel void drawTriangle(device const CameraGPU* cameras, device const MaterialGPU * materials, 
@@ -543,19 +596,18 @@ primitive_acceleration_structure accelerationStructure [[buffer(5)]], uint2 inde
     // check if index is within camera resolution bounds
     if (int(index.x) >= camera.resolution.x || int(index.y) >= camera.resolution.y) return;
 
-    uint cameraRaysPerPixel = 3;
+    uint cameraRaysPerPixel = 1;
     float3 accumulatedColor = float3(0.0, 0.0, 0.0);
 
     // ray r = generateCameraRay(camera, index, jitter);
-    uint misSamples = 999;
+    uint misSamples = 900;
     uint bounces = 2;
 
 
     for (uint i = 0; i < cameraRaysPerPixel; i++) {
         //get jitter values
-        // float2 pixelJitter = hashRandom(index, i);
-        float2 pixelJitter = hammersley2D(i + 1 * cameraRaysPerPixel, cameraRaysPerPixel);
-
+        float2 pixelJitter = hashRandom(index, i);
+        // float2 pixelJitter = hammersley2D(i + 1 * cameraRaysPerPixel, cameraRaysPerPixel);
         // gen intial ray
         ray r = generateCameraRay(camera, index, pixelJitter);
 
