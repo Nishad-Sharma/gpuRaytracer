@@ -4,3 +4,5 @@ Sources/gpuRaytracer/shaders.air
 Sources/gpuRaytracer/MyMetalLib.metallib
 *.png
 .swiftpm
+*.pdf
+*.txt

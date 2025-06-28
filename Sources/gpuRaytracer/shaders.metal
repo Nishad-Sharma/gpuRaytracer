@@ -143,15 +143,17 @@ float twoStrategyPowerHeuristic(float pdf1, float pdf2, float beta = 2.0) {
 
 // TODO: figure out which one is better
 float cameraExposure(CameraGPU camera) {
-    float maxLuminance = 1.2 * pow(2.0, camera.ev100);
+    float maxLuminance = 1.2 * pow(2.0, camera.ev100 );
+    // float maxLuminance = pow(2.0, camera.ev100 - 3.0); // 3.0 is a constant to adjust exposure);
     return 1.0 / maxLuminance;
     // return 1.0 / (78.0 * pow(2.0, camera.ev100));
 }
 
-float4 reinhartToneMapping(float3 color) {
+float3 reinhartToneMapping(float3 color) {
     float3 finalColor = color / (color + float3(1.0, 1.0, 1.0));
-    finalColor = clamp(pow(finalColor, float3(1.0 / 2.2)), 0.0, 1.0);
-    return float4(finalColor, 1.0);
+    // Don't apply gamma here - just clamp
+    finalColor = clamp(finalColor, 0.0, 1.0);
+    return finalColor;
 }
 
 OrthonormalBasisGPU buildOrthonormalBasis(float3 normal) {
@@ -243,7 +245,7 @@ ray generateCameraRay(CameraGPU camera, uint2 index, float2 pixelJitter) {
     return r;
 }
 
-void writeToPixelBuffer(device uchar* pixels, CameraGPU camera, uint2 index, float4 color) {
+void writeToPixelBuffer(device uchar* pixels, CameraGPU camera, uint2 index, float3 color) {
     int x = index.x;
     int y = index.y;
     int pixelOffset = (y * camera.resolution.x + x) * 4;
@@ -321,6 +323,33 @@ float calculateSquareLightPdf(float3 origin, SquareLightGPU light, float3 direct
     float area = light.width * light.depth;
     // PDF for area light: (distance^2) / (area * cosTheta)
     return (distance * distance) / (area * cosTheta + 1e-6);
+
+    // float denom = dot(direction, lightNormal);
+    // if (denom >= -1e-6) return 0.0; // Ray parallel to or pointing away from light plane
+    
+    // // Find distance to intersection with the light's plane
+    // float t = dot(light.center - origin, lightNormal) / denom;
+    // if (t <= 0.0) return 0.0; // Intersection behind origin
+    
+    // // 2. Find the hit point
+    // float3 hitPoint = origin + t * direction;
+    
+    // // 3. Check if hit point is within light bounds
+    // OrthonormalBasisGPU basis = buildOrthonormalBasis(lightNormal);
+    // float3 toHitPoint = hitPoint - light.center;
+    // float dx = abs(dot(toHitPoint, basis.tangent));
+    // float dy = abs(dot(toHitPoint, basis.bitangent));
+    
+    // if (dx > light.width/2.0 || dy > light.depth/2.0) {
+    //     return 0.0; // Hit point outside light bounds
+    // }
+    
+    // // 4. Calculate the actual PDF
+    // float area = light.width * light.depth;
+    // float cosTheta = max(0.0, -dot(direction, lightNormal));
+    
+    // // This is the correct PDF calculation - using t (distance to actual hit point)
+    // return (t * t) / (area * cosTheta + 1e-6);
 }
 
 ray cosineWeightedRay(float3 origin, float3 normal, float2 randomPoint) {
@@ -503,9 +532,9 @@ IntersectionGPU incomingIntersection, float2 randomPoints, uint samplesPerStrate
         if (usePowerHeuristic) {
             // float weight = balancedHeuristic(directLightPDF, cosinePDF, vndfPDF);
             float weight = powerHeuristic(directLightPDF, cosinePDF, vndfPDF, samplesPerStrategy, 1.0);
-            directLight += weight * brdfContribution * lightIntersection.material.emissive / directLightPDF;
+            directLight += weight * brdfContribution * light.emittedRadiance / directLightPDF;
         } else {
-            directLight += brdfContribution * lightIntersection.material.emissive / directLightPDF;
+            directLight += brdfContribution * light.emittedRadiance / directLightPDF;
         }
     }
     return directLight;
@@ -549,7 +578,7 @@ IntersectionGPU incomingIntersection, uint samples, uint bounces, float3 through
         float3 brdfContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.normal, incomingIntersection.material, lightRay.direction);
         if (cosineIntersection.type == HitLight) {
             // cosine += brdfContribution * cosineIntersection.material.emissive / cosinePDF;
-            cosine += weight * brdfContribution * cosineIntersection.material.emissive / cosinePDF;
+            cosine += weight * brdfContribution * light.emittedRadiance / cosinePDF;
         } else if (cosineIntersection.type == Hit) {
             // float2 u2 = haltonRandom(i + samplesPerStrategy, 6);
             // float2 u2 = haltonRandom(index.y * 800 + index.x + i, 6);
@@ -577,7 +606,7 @@ IntersectionGPU incomingIntersection, uint samples, uint bounces, float3 through
         float3 brdfContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.normal, incomingIntersection.material, lightRay.direction);
         if (vndfIntersection.type == HitLight) {
             // vndf += brdfContribution * vndfIntersection.material.emissive / vndfPDF; 
-            vndf += weight * brdfContribution * vndfIntersection.material.emissive / vndfPDF; 
+            vndf += weight * brdfContribution * light.emittedRadiance / vndfPDF; 
         } else if (vndfIntersection.type == Hit) {
             // float2 u2 = haltonRandom(i + 2 * samplesPerStrategy, 6);
             // float2 u2 = haltonRandom(index.y * 800 + index.x + i, 6);
@@ -588,9 +617,18 @@ IntersectionGPU incomingIntersection, uint samples, uint bounces, float3 through
     return (directLight + cosine + vndf) / float(samplesPerStrategy); // combine all contributions
 }
 
+void writeToTextBuffer(device float* textBuffer, float3 color, uint2 index, uint width) {
+    // Each pixel needs 3 floats (R, G, B)
+    int pixelOffset = (index.y * width + index.x) * 3;
+    textBuffer[pixelOffset + 0] = color.r;
+    textBuffer[pixelOffset + 1] = color.g;
+    textBuffer[pixelOffset + 2] = color.b;
+}
+
 kernel void drawTriangle(device const CameraGPU* cameras, device const MaterialGPU * materials, 
 device const SquareLightGPU* squareLights, device const float3* vertices, device uchar* pixels, 
-primitive_acceleration_structure accelerationStructure [[buffer(5)]], uint2 index [[thread_position_in_grid]]) {
+primitive_acceleration_structure accelerationStructure [[buffer(5)]], device float* textBuffer [[buffer(6)]], 
+uint2 index [[thread_position_in_grid]]) {
     CameraGPU camera = cameras[0];
     SquareLightGPU light = squareLights[0];
     // check if index is within camera resolution bounds
@@ -616,13 +654,12 @@ primitive_acceleration_structure accelerationStructure [[buffer(5)]], uint2 inde
         // float4 finalColor = float4(0.0, 0.0, 0.0, 1.0);
         // float3 col = (8 + intersection.point.y) / 14.0; // just for testing, remove later
         // float4 finalColor = float4(col, 1.0); // just for testing, remove later
-        // float4 finalColor = float4(col, 1.0); // just for testing, remove later
 
         if (intersection.type == Miss) {
             // no intersection leave color black.
         } else if (intersection.type == HitLight) {
             // hit light, set pixel to light color
-            float3 lightColor = intersection.material.emissive;
+            float3 lightColor = light.emittedRadiance;
             accumulatedColor += lightColor;
             // finalColor = reinhartToneMapping(lightColor * cameraExposure(camera));
         } else {
@@ -633,7 +670,31 @@ primitive_acceleration_structure accelerationStructure [[buffer(5)]], uint2 inde
             // finalColor = reinhartToneMapping(sampledColor * cameraExposure(camera));
         }
     }
-    float4 finalColor = reinhartToneMapping(accumulatedColor / float(cameraRaysPerPixel) * cameraExposure(camera));
+
+    // float3 hdrColor = accumulatedColor / float(cameraRaysPerPixel);
+    // float luminance = dot(hdrColor, float3(0.2126, 0.7152, 0.0722));
+    // float exposedLuminance = 683 * luminance * cameraExposure(camera);
+    // float toneMappedLuminance = exposedLuminance / (exposedLuminance + 1.0); // Reinhard on luminance
+    // float3 toneMappedColor = (hdrColor / (luminance + 1e-6)) * toneMappedLuminance;
+
+    // accumulated color gets mapped into 
+    float3 exposedColor = accumulatedColor / float(cameraRaysPerPixel) * cameraExposure(camera);
+    float3 toneMappedColor = reinhartToneMapping(exposedColor);
     
-    writeToPixelBuffer(pixels, camera, index, finalColor);
+
+    // float3 sRGBlo = exposedColor * 12.92;
+    // float3 sRGBHi = (pow(abs(exposedColor), 1.0/2.4) * 1.055) - 0.055;
+    // // float3 sRGB = (toneMappedColor <= float3(0.0031308)) ? sRGBlo : sRGBHi;
+    // float3 sRGB;
+    // if (exposedColor.x <= 0.0031308 || exposedColor.y <= 0.0031308 || exposedColor.z <= 0.0031308) {
+    //     sRGB = sRGBlo;
+    // } else {
+    //     sRGB = sRGBHi;
+    // }
+
+    float gamma = 2.2;
+    float3 gammaCorrectedColor = pow(toneMappedColor, float3(1.0 / gamma, 1.0 / gamma, 1.0 / gamma));
+    
+    writeToTextBuffer(textBuffer, accumulatedColor, index, camera.resolution.x);
+    writeToPixelBuffer(pixels, camera, index, gammaCorrectedColor);
 }
