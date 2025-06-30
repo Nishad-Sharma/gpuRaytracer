@@ -552,16 +552,16 @@ IntersectionGPU incomingIntersection, uint samples, uint bounces, float3 through
     // direct light sampling
     for (uint i = 0; i < samplesPerStrategy; i++) {
         // generate random points for sampling
-        float2 u = hashRandom(index, i);
-        // float2 u = haltonRandom(i, 0);
+        // float2 u = hashRandom(index, i);
+        float2 u = haltonRandom(i, 0);
         // float2 u = haltonRandom(index.y * 800 + index.x + i, 0);
         directLight += calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, incomingIntersection, u, samplesPerStrategy);
 
     }
     // cosine-weighted hemisphere sampling
     for (uint i = 0; i < samplesPerStrategy; i++) {
-        float2 u = hashRandom(index, i);
-        // float2 u = haltonRandom(i + samplesPerStrategy, 2);
+        // float2 u = hashRandom(index, i + samplesPerStrategy);
+        float2 u = haltonRandom(i + samplesPerStrategy, 2);
         // float2 u = haltonRandom(index.y * 800 + index.x + i + samplesPerStrategy, 2);
 
         // generate cosine-weighted ray using random points
@@ -581,14 +581,18 @@ IntersectionGPU incomingIntersection, uint samples, uint bounces, float3 through
             cosine += weight * brdfContribution * light.emittedRadiance / cosinePDF;
         } else if (cosineIntersection.type == Hit) {
             // float2 u2 = haltonRandom(i + samplesPerStrategy, 6);
+            float2 u2 = haltonRandom(i, 6);
             // float2 u2 = haltonRandom(index.y * 800 + index.x + i, 6);
+            // float2 u2 = hashRandom(index, i + 3 * samplesPerStrategy);
 
-            cosine += brdfContribution / cosinePDF * calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, cosineIntersection, u, 1, false);
+
+            cosine += brdfContribution / cosinePDF * calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, cosineIntersection, u2, 1, false);
         }
     }
     // VNDF sampling
     for (uint i = 0; i < samplesPerStrategy; i++) {
-        float2 u = hashRandom(index, i);
+        // float2 u = hashRandom(index, i + 2 * samplesPerStrategy);
+        float2 u = haltonRandom(i + 2 * samplesPerStrategy, 4);
         // float2 u = haltonRandom(i + 2 * samplesPerStrategy, 4);
         // float2 u = haltonRandom(index.y * 800 + index.x + i + 2 * samplesPerStrategy, 4);
 
@@ -609,9 +613,12 @@ IntersectionGPU incomingIntersection, uint samples, uint bounces, float3 through
             vndf += weight * brdfContribution * light.emittedRadiance / vndfPDF; 
         } else if (vndfIntersection.type == Hit) {
             // float2 u2 = haltonRandom(i + 2 * samplesPerStrategy, 6);
+            // float2 u2 = haltonRandom(i + 2 * samplesPerStrategy, 5);
+            float2 u2 = haltonRandom(i + samplesPerStrategy, 6);
             // float2 u2 = haltonRandom(index.y * 800 + index.x + i, 6);
+            // float2 u2 = hashRandom(index, i + 4 * samplesPerStrategy);
 
-            vndf += brdfContribution / vndfPDF * calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, vndfIntersection, u, 1, false);
+            vndf += brdfContribution / vndfPDF * calculateDirectLightSamplingContribution(materials, light, vertices, accelerationStructure, index, vndfIntersection, u2, 1, false);
         }
     }
     return (directLight + cosine + vndf) / float(samplesPerStrategy); // combine all contributions
@@ -638,7 +645,7 @@ uint2 index [[thread_position_in_grid]]) {
     float3 accumulatedColor = float3(0.0, 0.0, 0.0);
 
     // ray r = generateCameraRay(camera, index, jitter);
-    uint misSamples = 900;
+    uint misSamples = 300;
     uint bounces = 2;
 
 
