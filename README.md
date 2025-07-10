@@ -1,3 +1,5 @@
+ ![cornell raytrace image](https://github.com/Nishad-Sharma/gpuRaytracer/blob/main/Sources/gpuRaytracer/halton.png)
+
 run the following inside "Sources/gpuRaytracer" to compile a metallib:
 
 ```xcrun -sdk macosx metal -I../CHeaders -c shaders.metal -o shaders.air```
