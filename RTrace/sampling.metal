@@ -94,6 +94,34 @@ float2 hashRandom3D(uint3 index, uint i) {
     return float2(u1, u2);
 }
 
+constant unsigned int primes[] = {
+    2,   3,  5,  7,
+    11, 13, 17, 19,
+    23, 29, 31, 37,
+    41, 43, 47, 53,
+    59, 61, 67, 71,
+    73, 79, 83, 89
+};
+
+// index i, dimension d.
+float halton(unsigned int i, unsigned int d) {
+    unsigned int b = primes[d];
+
+    float f = 1.0f;
+    float invB = 1.0f / b;
+
+    float r = 0;
+
+    while (i > 0) {
+        f = f * invB;
+        r = r + f * (i % b);
+        i = i / b;
+    }
+
+    return r;
+}
+
+
 ray generateCameraRay(CameraGPU camera, uint3 index, float2 pixelJitter) {
     // pixel/screen coordinates
     // look into temporal accumulation, use frame counter to accumulate results over time

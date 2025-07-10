@@ -19,6 +19,7 @@ public class Renderer {
     let vertexBuffer: MTLBuffer
     let debugBuffer: MTLBuffer
 
+    let randomTexture: MTLTexture
     let renderTexture: MTLTexture
     
     let accelerationStructure: MTLAccelerationStructure
@@ -80,6 +81,35 @@ public class Renderer {
         textureDescriptor.storageMode = .shared
         renderTexture = device.makeTexture(descriptor: textureDescriptor)!
         
+        let randomTextureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .r32Uint,
+            width: Int(camera.resolution.x),
+            height: Int(camera.resolution.y),
+            mipmapped: false
+        )
+        randomTextureDescriptor.usage = [.shaderRead]
+        randomTextureDescriptor.storageMode = .shared
+        randomTexture = device.makeTexture(descriptor: randomTextureDescriptor)!
+    
+        let width = Int(camera.resolution.x)
+        let height = Int(camera.resolution.y)
+        var randomData = [UInt32](repeating: 0, count: width * height)
+        
+        for i in 0..<(width * height) {
+            // Using rand() as requested. Note: arc4random_uniform is often preferred in Swift.
+            randomData[i] = UInt32(arc4random() % (1024 * 1024))
+        }
+        
+        let region = MTLRegion(origin: MTLOrigin(x: 0, y: 0, z: 0),
+                               size: MTLSize(width: width, height: height, depth: 1))
+        let bytesPerRow = width * MemoryLayout<UInt32>.size
+        
+        randomTexture.replace(region: region,
+                              mipmapLevel: 0,
+                              withBytes: randomData,
+                              bytesPerRow: bytesPerRow)
+                
+        
         accelerationStructure = setupAccelerationStructures(device: device, triangles: cornellBoxScene.triangles)
 
     }
@@ -97,6 +127,7 @@ public class Renderer {
         computeCommandEncoder?.setAccelerationStructure(accelerationStructure, bufferIndex: 5)
         computeCommandEncoder?.setBuffer(debugBuffer, offset: 0, index: 6)
         computeCommandEncoder?.setTexture(renderTexture, index: 0)
+        computeCommandEncoder?.setTexture(randomTexture, index: 1)
 
         // sort out threads, can yoyu just do 32*32 even if it doesnt divide evenly?
         let width = Int(camera.resolution.x)

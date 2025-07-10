@@ -13,6 +13,7 @@ kernel void pathTrace(device const CameraGPU* cameras [[buffer(0)]],
     device const SquareLightGPU* squareLights [[buffer(2)]], 
     device const float3* vertices [[buffer(3)]],
     texture2d<float, access::write> outputTexture [[texture(0)]],
+    texture2d<unsigned int, access::read> randomTexture [[texture(1)]],
     primitive_acceleration_structure accelerationStructure [[buffer(5)]],
     device float* debugBuffer [[buffer(6)]],
     uint3 index [[thread_position_in_grid]])
@@ -33,7 +34,11 @@ kernel void pathTrace(device const CameraGPU* cameras [[buffer(0)]],
     for (uint n = 0; n < samples; n++) {
         // generate one camera ray
         
-        float2 uv = hashRandom3D(index, 1);
+//        float2 uv = hashRandom3D(index, 1);
+        unsigned int offset = randomTexture.read(index.xy).x;
+        
+        float2 uv = float2(halton(offset + n, 0),
+                           halton(offset + n, 1));
         
         ray r = generateCameraRay(cameras[0], index, uv);
         
@@ -66,7 +71,10 @@ kernel void pathTrace(device const CameraGPU* cameras [[buffer(0)]],
                 // sample light
 //                ray toLight = directSquareLightRay(intersectionPoint, light, uv);
                 float3 lightDirection;
-                float3 lightColor = sampleAreaLight(light, uv, intersectionPoint, lightDirection);
+                
+                float2 w = float2(halton(offset + n, 2 + bounce * 5 + 0),
+                                  halton(offset + n, 2 + bounce * 5 + 1));
+                float3 lightColor = sampleAreaLight(light, w, intersectionPoint, lightDirection);
                 
                 
                 lightColor *= saturate(dot(normal, lightDirection));
@@ -79,7 +87,9 @@ kernel void pathTrace(device const CameraGPU* cameras [[buffer(0)]],
                 
                 
                 //sample cosine only
-                float2 u = hashRandom3D(index, bounce);
+//                float2 u = hashRandom3D(index, bounce);
+                float2 u = float2(halton(offset + n, 2 + bounce * 5 + 2),
+                                  halton(offset + n, 2 + bounce * 5 + 3));
                 float3 sampleDirection = sampleCosineWeightedHemisphere(u);
                 
                 sampleDirection = alignHemisphereWithNormal(sampleDirection, normal);
