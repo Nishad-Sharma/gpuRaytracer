@@ -227,10 +227,10 @@ ray generateCameraRay(CameraGPU camera, uint2 index, float2 pixelJitter) {
     float3 u = normalize(cross(camera.up, w));
     float3 v = normalize(cross(w, u));
     
-    // float s = ((float(x) + pixelJitter.x) / float(camera.resolution.x)) * 2.0 - 1.0;
-    // float t = -(((float(y) + pixelJitter.y) / float(camera.resolution.y)) * 2.0 - 1.0);
-    float s = (float(x) / float(camera.resolution.x)) * 2.0 - 1.0;
-    float t = -((float(y) / float(camera.resolution.y)) * 2.0 - 1.0);
+    float s = ((float(x) + pixelJitter.x) / float(camera.resolution.x)) * 2.0 - 1.0;
+    float t = -(((float(y) + pixelJitter.y) / float(camera.resolution.y)) * 2.0 - 1.0);
+    // float s = (float(x) / float(camera.resolution.x)) * 2.0 - 1.0;
+    // float t = -((float(y) / float(camera.resolution.y)) * 2.0 - 1.0);
 
     // dir to pixel
     float3 dir = normalize(s * halfWidth * u + t * halfHeight * v - w);
@@ -641,7 +641,7 @@ uint2 index [[thread_position_in_grid]]) {
     // check if index is within camera resolution bounds
     if (int(index.x) >= camera.resolution.x || int(index.y) >= camera.resolution.y) return;
 
-    uint cameraRaysPerPixel = 1;
+    uint cameraRaysPerPixel = 6;
     float3 accumulatedColor = float3(0.0, 0.0, 0.0);
 
     // ray r = generateCameraRay(camera, index, jitter);

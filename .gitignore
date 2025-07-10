@@ -6,3 +6,5 @@ Sources/gpuRaytracer/MyMetalLib.metallib
 .swiftpm
 *.pdf
 *.txt
+*xcuserdata/
+*.DS_Store
