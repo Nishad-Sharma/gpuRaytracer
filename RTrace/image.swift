@@ -38,7 +38,7 @@ func saveTextureToImage(texture: MTLTexture, fileName: String) {
                      mipmapLevel: 0)
     
     // 2. Convert float data to 8-bit with simple exposure and gamma correction
-    let exposure: Float = 4.0  // Adjust based on your scene brightness
+    let exposure: Float = 2.0  // Adjust based on your scene brightness
     let gamma: Float = 2.2
     
     var rgbaData = [UInt8](repeating: 0, count: width * height * 4)

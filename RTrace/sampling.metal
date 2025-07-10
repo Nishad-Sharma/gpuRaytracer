@@ -198,7 +198,8 @@ ray directSquareLightRay(float3 origin, SquareLightGPU light, float2 randomPoint
 inline float3 sampleAreaLight(SquareLightGPU light,
                             float2 u,
                             float3 position,
-                            thread float3 & lightDirection)
+                            thread float3 & lightDirection,
+                            thread float & lightDistance)
 {
     // Map to -1..1
     u = u * 2.0f - 1.0f;
@@ -214,7 +215,7 @@ inline float3 sampleAreaLight(SquareLightGPU light,
     // Compute the vector from sample point on  the light source to intersection point.
     lightDirection = samplePosition - position;
 
-    float lightDistance = length(lightDirection);
+    lightDistance = length(lightDirection);
 
     float inverseLightDistance = 1.0f / max(lightDistance, 1e-3f);
 

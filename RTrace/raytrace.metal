@@ -21,19 +21,18 @@ kernel void pathTrace(device const CameraGPU* cameras [[buffer(0)]],
     
     SquareLightGPU light = squareLights[0];
     
-    uint samples = 80;
+    uint samples = 400;
     int bounces = 3;
     intersector<triangle_data> i;
     i.assume_geometry_type(geometry_type::triangle);
     i.force_opacity(forced_opacity::opaque);
-    i.accept_any_intersection(false);
+    
     typename intersector<triangle_data>::result_type intersection;
     
     float3 luminance = float3(0.0);
     // gen $samples camera rays
     for (uint n = 0; n < samples; n++) {
         // generate one camera ray
-        
 //        float2 uv = hashRandom3D(index, 1);
         unsigned int offset = randomTexture.read(index.xy).x;
         
@@ -43,10 +42,10 @@ kernel void pathTrace(device const CameraGPU* cameras [[buffer(0)]],
         ray r = generateCameraRay(cameras[0], index, uv);
         
         float3 accumulatedColor = float3(0.0);
-        
         float3 color = float3(1.0);
         
         for (int bounce = 0; bounce < bounces; bounce++) {
+            i.accept_any_intersection(false);
             intersection = i.intersect(r, accelerationStructure);
             
             if (intersection.type == intersection_type::none) {
@@ -64,27 +63,30 @@ kernel void pathTrace(device const CameraGPU* cameras [[buffer(0)]],
                 // sample light
                 // update ray using MIS
                 
-                
                 float3 normal = getTriangleNormal(vertices, intersection.primitive_id);
                 float3 intersectionPoint = r.origin + r.direction * intersection.distance + normal * 1e-3f;
                 
                 // sample light
-//                ray toLight = directSquareLightRay(intersectionPoint, light, uv);
                 float3 lightDirection;
-                
+                float lightDistance;
                 float2 w = float2(halton(offset + n, 2 + bounce * 5 + 0),
                                   halton(offset + n, 2 + bounce * 5 + 1));
-                float3 lightColor = sampleAreaLight(light, w, intersectionPoint, lightDirection);
-                
-                
+                float3 lightColor = sampleAreaLight(light, w, intersectionPoint, lightDirection, lightDistance);
                 lightColor *= saturate(dot(normal, lightDirection));
-                
                 color *= intersectionMaterial.diffuse.xyz;
                 
                 // add shadow ray
-                accumulatedColor += lightColor * color;
+                ray shadowRay;
+                shadowRay.origin = intersectionPoint;
+                shadowRay.direction = lightDirection;
+                shadowRay.max_distance = lightDistance - 1e-3f;
+                i.accept_any_intersection(true);
                 
+                intersection = i.intersect(shadowRay, accelerationStructure);
                 
+                if (intersection.type == intersection_type::none) {
+                    accumulatedColor += lightColor * color;
+                }
                 
                 //sample cosine only
 //                float2 u = hashRandom3D(index, bounce);
@@ -105,6 +107,5 @@ kernel void pathTrace(device const CameraGPU* cameras [[buffer(0)]],
     //tonemap?
     //write to buffer
     outputTexture.write(float4(luminance, 1.0), index.xy);
-    // writeToPixelBuffer(pixels, cameras[0], index.xy, luminance);
     
 }
