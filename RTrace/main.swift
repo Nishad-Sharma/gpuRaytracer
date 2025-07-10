@@ -15,7 +15,13 @@ let outputFileName: String = {
     if args.count > 1 {
         return args[1]
     } else {
-        return "/Users/nishadsharma/RTrace/RTrace/output.png"
+        let sourceFileURL = URL(fileURLWithPath: #file)
+        
+        // Navigate up to the project directory
+        let projectDir = sourceFileURL.deletingLastPathComponent().path
+        
+        // Create output path in the project directory
+        return "\(projectDir)/output.png"
     }
 }()
 

@@ -20,8 +20,8 @@ func initCornellBox() -> Scene {
     let roomSize: Float = 5.0
     let half = roomSize / 2.0
 
-    let lightWidth: Float = 1.5
-    let lightDepth: Float = 1.5
+    let lightWidth: Float = 1.0
+    let lightDepth: Float = 1.0
     let lightY: Float = half - 0.01
     let lightCenter = simd_float3(0, lightY, 0)
     let halfW = lightWidth / 2
@@ -34,7 +34,7 @@ func initCornellBox() -> Scene {
     let v3 = simd_float3(lightCenter.x - halfW, lightY, lightCenter.z + halfD)
 
     // Emissive material for the light triangles
-    var lightMaterial = Material(
+    let lightMaterial = Material(
         diffuse: simd_float4(1.0, 0.95, 0.9, 1.0),
         metallic: 0.0,
         roughness: 0.0,
@@ -42,7 +42,7 @@ func initCornellBox() -> Scene {
         // emissive: simd_float3(20, 20, 20) // Adjust intensity as needed
     )
 
-    var squareLight = SquareLight(
+    let squareLight = SquareLight(
         center: lightCenter,
         vertices: [v0, v1, v2, v3],
         material: lightMaterial,

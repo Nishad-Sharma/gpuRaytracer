@@ -14,10 +14,12 @@ public class Renderer {
     
     let cameraBuffer: MTLBuffer
     let materialsBuffer: MTLBuffer
-    let pixelsBuffer: MTLBuffer
+//    let pixelsBuffer: MTLBuffer
     let lightsBuffer: MTLBuffer
     let vertexBuffer: MTLBuffer
     let debugBuffer: MTLBuffer
+
+    let renderTexture: MTLTexture
     
     let accelerationStructure: MTLAccelerationStructure
     
@@ -59,14 +61,24 @@ public class Renderer {
         length: camerasGPU.count * MemoryLayout<CameraGPU>.size, options: .storageModeShared)!
         materialsBuffer = device.makeBuffer(bytes: materialsGPU,
         length: materialsGPU.count * MemoryLayout<MaterialGPU>.size, options: .storageModeShared)!
-        pixelsBuffer = device.makeBuffer(length: camera.pixelCount() * 4 * MemoryLayout<UInt8>.size,
-        options: .storageModeShared)!
+        // pixelsBuffer = device.makeBuffer(length: camera.pixelCount() * 4 * MemoryLayout<UInt8>.size,
+        // options: .storageModeShared)!
         lightsBuffer = device.makeBuffer(bytes: squareLightsGPU,
         length: squareLightsGPU.count * MemoryLayout<SquareLightGPU>.size, options: .storageModeShared)!
         vertexBuffer = device.makeBuffer(bytes: allVertices,
         length: allVertices.count * MemoryLayout<simd_float3>.size, options: .storageModeShared)!
         debugBuffer = device.makeBuffer(length: camera.pixelCount() *
         MemoryLayout<simd_float3>.size, options: .storageModeShared)!
+
+        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba16Float,
+            width: Int(camera.resolution.x),
+            height: Int(camera.resolution.y),
+            mipmapped: false
+        )
+        textureDescriptor.usage = [.shaderWrite, .shaderRead]
+        textureDescriptor.storageMode = .shared
+        renderTexture = device.makeTexture(descriptor: textureDescriptor)!
         
         accelerationStructure = setupAccelerationStructures(device: device, triangles: cornellBoxScene.triangles)
 
@@ -81,14 +93,15 @@ public class Renderer {
         computeCommandEncoder?.setBuffer(materialsBuffer, offset: 0, index: 1)
         computeCommandEncoder?.setBuffer(lightsBuffer, offset: 0, index: 2)
         computeCommandEncoder?.setBuffer(vertexBuffer, offset: 0, index: 3)
-        computeCommandEncoder?.setBuffer(pixelsBuffer, offset: 0, index: 4)
+        // computeCommandEncoder?.setBuffer(pixelsBuffer, offset: 0, index: 4)
         computeCommandEncoder?.setAccelerationStructure(accelerationStructure, bufferIndex: 5)
         computeCommandEncoder?.setBuffer(debugBuffer, offset: 0, index: 6)
+        computeCommandEncoder?.setTexture(renderTexture, index: 0)
 
         // sort out threads, can yoyu just do 32*32 even if it doesnt divide evenly?
         let width = Int(camera.resolution.x)
         let height = Int(camera.resolution.y)
-        let pixels = [UInt8](repeating: 0, count: camera.pixelCount() * 4)
+//        let pixels = [UInt8](repeating: 0, count: camera.pixelCount() * 4)
         
         let gridSize = MTLSize(width: width, height: height, depth: 1)
         // let threadsPerThreadGroup = MTLSize(width: 16, height: 16, depth: 1)
@@ -98,12 +111,46 @@ public class Renderer {
         computeCommandEncoder?.endEncoding()
         commandBuffer?.commit()
         commandBuffer?.waitUntilCompleted()
-        
-        let pixelPtr = pixelsBuffer.contents()
-        let count = pixels.count
-        let bufferPointer = pixelPtr.bindMemory(to: UInt8.self, capacity: count)
-        let pixelArray = Array(UnsafeBufferPointer(start: bufferPointer, count: count))
 
-        savePixelArrayToImage(pixels: pixelArray, width: width, height: height, fileName: outputFileName)
+        saveTextureToImage(texture: renderTexture, fileName: outputFileName)
+        
+        // let pixelPtr = pixelsBuffer.contents()
+        // let count = pixels.count
+        // let bufferPointer = pixelPtr.bindMemory(to: UInt8.self, capacity: count)
+        // let pixelArray = Array(UnsafeBufferPointer(start: bufferPointer, count: count))
+
+//        let bytesPerRow = width * 4
+//        let bytesPerImage = bytesPerRow * height
+//        let pixelCount = width * height * 4
+//        let tempBuffer = device.makeBuffer(length: pixelCount, options: .storageModeShared)!
+
+//        // Create a blit command buffer to copy texture data to buffer
+//        let blitCommandBuffer = commandQueue.makeCommandBuffer()
+//        let blitEncoder = blitCommandBuffer?.makeBlitCommandEncoder()
+//
+//        let origin = MTLOrigin(x: 0, y: 0, z: 0)
+//        let size = MTLSize(width: width, height: height, depth: 1)
+//
+//        blitEncoder?.copy(
+//            from: renderTexture,
+//            sourceSlice: 0,
+//            sourceLevel: 0,
+//            sourceOrigin: origin,
+//            sourceSize: size,
+//            to: tempBuffer,
+//            destinationOffset: 0,
+//            destinationBytesPerRow: bytesPerRow,
+//            destinationBytesPerImage: bytesPerImage
+//        )
+//
+//        blitEncoder?.endEncoding()
+//        blitCommandBuffer?.commit()
+//        blitCommandBuffer?.waitUntilCompleted()
+//
+//        let pixelPtr = tempBuffer.contents()
+//        let bufferPointer = pixelPtr.bindMemory(to: UInt8.self, capacity: pixelCount)
+//        let pixelArray = Array(UnsafeBufferPointer(start: bufferPointer, count: pixelCount))
+//
+//        savePixelArrayToImage(pixels: pixelArray, width: width, height: height, fileName: outputFileName)
     }
 }

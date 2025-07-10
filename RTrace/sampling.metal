@@ -128,3 +128,124 @@ ray generateCameraRay(CameraGPU camera, uint3 index, float2 pixelJitter) {
     return r;
 }
 
+OrthonormalBasisGPU buildOrthonormalBasis(float3 normal) {
+    float3 tangent;
+    if (abs(normal.x) > 0.9) {
+        tangent = normalize(float3(0, 1, 0) - dot(float3(0, 1, 0), normal) * normal);
+    } else {
+        tangent = normalize(float3(1, 0, 0) - dot(float3(1, 0, 0), normal) * normal);
+    }
+    float3 bitangent = cross(normal, tangent);
+    
+    OrthonormalBasisGPU basis;
+    basis.tangent = tangent;
+    basis.bitangent = bitangent;
+    return basis;
+}
+
+ray directSquareLightRay(float3 origin, SquareLightGPU light, float2 randomPoints) {
+    float3 lightNormal = float3(0, -1, 0); // TODO: hardcoded for now fix up later.
+    OrthonormalBasisGPU basis = buildOrthonormalBasis(lightNormal);
+
+    float3 center = light.center;
+    // Uniformly sample a point on the rectangle
+    float x = (randomPoints.x - 0.5) * light.width;
+    float y = (randomPoints.y - 0.5) * light.depth;
+    float3 samplePos = center + basis.tangent * x + basis.bitangent * y;
+
+    // Direction from shading point to light sample
+    float3 toLight = samplePos - origin;
+    float distance = length(toLight);
+    float3 lightDir = toLight / distance;
+
+    ray r;
+    r.origin = origin;
+    r.direction = lightDir;
+    r.min_distance = 0.001;
+    r.max_distance = distance;
+
+    return r;
+}
+
+inline float3 sampleAreaLight(SquareLightGPU light,
+                            float2 u,
+                            float3 position,
+                            thread float3 & lightDirection)
+{
+    // Map to -1..1
+    u = u * 2.0f - 1.0f;
+
+    float3 normal = float3(0.0f, -1.0f, 0.0f);
+    float3 right = float3(0.25f, 0.0f, 0.0f);
+    float3 up = float3(0.0f, 0.0f, 0.25f);
+    // Transform into the light's coordinate system.
+    float3 samplePosition = light.center +
+                            right * u.x +
+                            up * u.y;
+
+    // Compute the vector from sample point on  the light source to intersection point.
+    lightDirection = samplePosition - position;
+
+    float lightDistance = length(lightDirection);
+
+    float inverseLightDistance = 1.0f / max(lightDistance, 1e-3f);
+
+    // Normalize the light direction.
+    lightDirection *= inverseLightDistance;
+
+    // Start with the light's color.
+    float3 lightColor = light.color.xyz;
+
+    // Light falls off with the inverse square of the distance to the intersection point.
+    lightColor *= (inverseLightDistance * inverseLightDistance);
+
+    // Light also falls off with the cosine of the angle between the intersection point
+    // and the light source.
+    lightColor *= saturate(dot(-lightDirection, normal));
+    
+    return lightColor;
+}
+
+//float3 calculateDirectLightSamplingContribution(device const MaterialGPU* materials, SquareLightGPU light,
+//device const float3* vertices, primitive_acceleration_structure accelerationStructure, uint2 index,
+//IntersectionGPU incomingIntersection, float2 randomPoints, uint samplesPerStrategy, bool usePowerHeuristic = true) {
+//    float3 directLight = float3(0.0, 0.0, 0.0);
+//    ray lightRay = directSquareLightRay(incomingIntersection.point + incomingIntersection.normal * 1e-4, light, randomPoints);
+//    float directLightPDF = calculateSquareLightPdf(incomingIntersection.point, light, lightRay.direction);
+//    float cosinePDF = calculateCosineWeightedPdf(incomingIntersection.normal, lightRay.direction);
+//    float vndfPDF = calculateVNDFPdf(-incomingIntersection.ray.direction, incomingIntersection.normal, lightRay.direction, incomingIntersection.material.roughness);
+//
+//    IntersectionGPU lightIntersection = getClosestIntersection(accelerationStructure, materials, vertices,
+//    lightRay);
+//    if (lightIntersection.type == HitLight) {
+//        float3 brdfContribution = calculateBRDFContribution(incomingIntersection.ray, incomingIntersection.normal, incomingIntersection.material, lightRay.direction);
+//        if (usePowerHeuristic) {
+//            // float weight = balancedHeuristic(directLightPDF, cosinePDF, vndfPDF);
+//            float weight = powerHeuristic(directLightPDF, cosinePDF, vndfPDF, samplesPerStrategy, 1.0);
+//            directLight += weight * brdfContribution * light.emittedRadiance / directLightPDF;
+//        } else {
+//            directLight += brdfContribution * light.emittedRadiance / directLightPDF;
+//        }
+//    }
+//    return directLight;
+//}
+
+bool checkShadowRay() {
+    intersector<triangle_data> i;
+    i.assume_geometry_type(geometry_type::triangle);
+    i.force_opacity(forced_opacity::opaque);
+    i.accept_any_intersection(false);
+    
+    
+    
+    return false;
+}
+
+float3 calculateDirectLightContribution() {
+    float3 lightContribution = float3(0.0);
+//    ray toLight = directSquareLightRay(<#float3 origin#>, <#SquareLightGPU light#>, <#float2 randomPoints#>);
+    
+    
+    return lightContribution;
+}
+
