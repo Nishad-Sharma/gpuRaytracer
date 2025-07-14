@@ -1,5 +1,7 @@
  ![cornell raytrace image](https://github.com/Nishad-Sharma/gpuRaytracer/blob/main/Sources/gpuRaytracer/halton.png)
 
+Physically based, GPU acclerated path tracer using MIS and one bounce. 
+
 run the following inside "Sources/gpuRaytracer" to compile a metallib:
 
 ```xcrun -sdk macosx metal -I../CHeaders -c shaders.metal -o shaders.air```
