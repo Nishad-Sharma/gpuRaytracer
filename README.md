@@ -1,4 +1,4 @@
- ![cornell raytrace image](https://github.com/Nishad-Sharma/gpuRaytracer/blob/main/Sources/gpuRaytracer/halton.png)
+ ![cornell raytrace image](https://github.com/Nishad-Sharma/gpuRaytracer/blob/main/Sources/gpuRaytracer/example.png)
 
 Physically based, GPU acclerated path tracer using MIS and one bounce. 
 
